@@ -1,0 +1,12 @@
+[Unit]
+Description=goesrecv
+After=network.target
+
+[Service]
+User=pi
+ExecStart=/usr/local/bin/goesrecv -v -i 1 --config /home/pi/goes/goesrecv.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
