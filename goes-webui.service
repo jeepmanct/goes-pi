@@ -1,0 +1,13 @@
+[Unit]
+Description=GOES control panel
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/goes/webui
+ExecStart=/usr/bin/python3 -I /home/pi/goes/webui/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

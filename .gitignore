@@ -1,1 +1,5 @@
 data/
+webui/password.txt
+webui/thumbs/
+*.bak
+__pycache__/
