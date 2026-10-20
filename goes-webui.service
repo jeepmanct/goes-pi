@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 User=pi
+Environment=GOES_UI_PORT=7777
 WorkingDirectory=/home/pi/goes/webui
 ExecStart=/usr/bin/python3 -I /home/pi/goes/webui/app.py
 Restart=always

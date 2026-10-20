@@ -1,5 +1,6 @@
 data/
 webui/password.txt
 webui/thumbs/
+webui/tls/
 *.bak
 __pycache__/
