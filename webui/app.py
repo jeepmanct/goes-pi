@@ -321,7 +321,7 @@ def load_password():
     return PASSWORD_FILE.read_text().strip()
 
 
-PASSWORD = load_password()
+load_password()  # creates the file on first run
 SECURE = CERT.exists() and KEY.exists()
 
 
@@ -349,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         if h.startswith("Basic "):
             try:
                 user, _, pw = base64.b64decode(h[6:]).decode().partition(":")
-                ok = hmac.compare_digest(pw, PASSWORD) & hmac.compare_digest(user, "pi")
+                ok = hmac.compare_digest(pw, load_password()) & hmac.compare_digest(user, "pi")
             except Exception:
                 ok = False
             if not ok:
