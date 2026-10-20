@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 import signal
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,12 @@ PASSWORD_FILE = WEB_DIR / "password.txt"
 RECV_CONF = GOES_DIR / "goesrecv.conf"
 PROC_CONF = GOES_DIR / "goesproc.conf"
 PORT = int(os.environ.get("GOES_UI_PORT", "8080"))
+CERT = Path(os.environ.get("GOES_UI_CERT", WEB_DIR / "tls" / "fullchain.pem"))
+KEY = Path(os.environ.get("GOES_UI_KEY", WEB_DIR / "tls" / "privkey.pem"))
+MAX_FAILS = 5
+LOCKOUT_SECS = 900
+FAILS = {}  # ip -> (count, first_fail_time)
+FAILS_LOCK = threading.Lock()
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif"}
 
@@ -210,6 +217,24 @@ def save_text(path, text):
     os.replace(tmp, path)
 
 
+def check_proc_dirs(text):
+    """goesproc writes wherever 'directory' points; keep it under the data dir."""
+    base = str(DATA_DIR.resolve())
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "directory" and isinstance(v, str):
+                    if not os.path.normpath(v).startswith(base + os.sep) or ".." in v.split("/"):
+                        raise ValueError(f"directory {v!r} must be inside {base}")
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for i in o:
+                walk(i)
+    walk(tomllib.loads(text))
+
+
 def update_config(changes):
     text = RECV_CONF.read_text()
     for name, v in changes.items():
@@ -297,23 +322,52 @@ def load_password():
 
 
 PASSWORD = load_password()
+SECURE = CERT.exists() and KEY.exists()
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "goes-ui"
+    timeout = 30  # also bounds the lazy TLS handshake
 
     def log_message(self, *a):
         pass
+
+    def client_ip(self):
+        return self.client_address[0]
+
+    def locked_out(self):
+        with FAILS_LOCK:
+            n, t = FAILS.get(self.client_ip(), (0, 0))
+            if n >= MAX_FAILS and time.time() - t < LOCKOUT_SECS:
+                return True
+            if n >= MAX_FAILS:
+                FAILS.pop(self.client_ip(), None)
+        return False
 
     def authed(self):
         h = self.headers.get("Authorization", "")
         if h.startswith("Basic "):
             try:
-                _, _, pw = base64.b64decode(h[6:]).decode().partition(":")
-                return hmac.compare_digest(pw, PASSWORD)
+                user, _, pw = base64.b64decode(h[6:]).decode().partition(":")
+                ok = hmac.compare_digest(pw, PASSWORD) & hmac.compare_digest(user, "pi")
             except Exception:
-                return False
+                ok = False
+            if not ok:
+                with FAILS_LOCK:
+                    n, t = FAILS.get(self.client_ip(), (0, time.time()))
+                    FAILS[self.client_ip()] = (n + 1, t if n else time.time())
+                    print(f"failed login from {self.client_ip()} ({n + 1})", flush=True)
+                time.sleep(1)
+            return ok
         return False
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if SECURE:
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+        super().end_headers()
 
     def send_json(self, obj, code=200):
         body = json.dumps(obj).encode()
@@ -340,6 +394,13 @@ class Handler(BaseHTTPRequestHandler):
             shutil.copyfileobj(f, self.wfile)
 
     def gate(self):
+        if self.locked_out():
+            body = b"Too many failed logins. Try again later."
+            self.send_response(429)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return False
         if self.authed():
             return True
         self.send_response(401)
@@ -408,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.gate():
             return
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            return self.send_json({"error": "content-type must be application/json"}, 415)
         n = int(self.headers.get("Content-Length") or 0)
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -432,6 +495,8 @@ class Handler(BaseHTTPRequestHandler):
                     msg += "; " + PROCS["goesrecv"].start()
                 return self.send_json({"result": msg})
             if path == "/api/config/raw":
+                if body["which"] == "goesproc":
+                    check_proc_dirs(body["text"])
                 save_text(GOES_DIR / ("goesrecv.conf" if body["which"] == "goesrecv"
                                       else "goesproc.conf"), body["text"])
                 return self.send_json({"result": "saved (restart to apply)"})
@@ -453,7 +518,14 @@ if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     signal.signal(signal.SIGTERM, shutdown)
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"GOES UI on port {PORT}; password in {PASSWORD_FILE}", flush=True)
+    if SECURE:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(CERT, KEY)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
+                                     do_handshake_on_connect=False)
+    print(f"GOES UI on port {PORT} ({'HTTPS' if SECURE else 'plain HTTP - LAN only'}); "
+          f"password in {PASSWORD_FILE}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
