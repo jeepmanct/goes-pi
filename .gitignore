@@ -4,3 +4,10 @@ webui/thumbs/
 webui/tls/
 *.bak
 __pycache__/
+mail-password.txt
+mail.conf
+.digest-sent
+.digest-failed
+signal-history.jsonl
+.alerts-seen
+webui/*.bak*

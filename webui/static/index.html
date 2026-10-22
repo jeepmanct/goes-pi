@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GOES Control</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GOES">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
 :root {
   --bg: #0e1116; --panel: #171c24; --line: #2a313c; --text: #e6e9ee; --muted: #8a94a3;
@@ -45,7 +51,10 @@ button.b, a.b { background: var(--accent); color: #fff; border: 0; border-radius
 button.b.go { background: var(--good); color: #05210f; }
 button.b.stop { background: var(--bad); }
 button.b.ghost { background: none; border: 1px solid var(--line); color: var(--text); }
-button.b:disabled { opacity: .5; }
+button.b:disabled { opacity: .35; }
+.pstate { font-weight: 600; margin: 2px 0 10px; }
+.pstate.on { color: var(--good); }
+.pstate.off { color: var(--muted); }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 canvas { width: 100%; height: 150px; display: block; }
 label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
@@ -63,7 +72,32 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 .dir { padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; display: flex; justify-content: space-between; }
 .msg { color: var(--muted); font-size: 14px; min-height: 20px; margin-top: 8px; }
 #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px; z-index: 9; }
-#lightbox img { max-width: 96vw; max-height: 82vh; }
+#lb-form { display: none; width: min(94vw, 480px); max-height: 80vh; overflow: auto; background: var(--panel); color: var(--text); padding: 14px; border-radius: 10px; }
+#lb-form label { display: flex; align-items: center; gap: 10px; margin: 0; padding: 6px 0; font-size: 15px; word-break: break-all; }
+#lb-form label input { width: auto; flex: none; }
+#lb-txt { display: none; width: 94vw; max-height: 78vh; overflow: auto; margin: 0; padding: 12px; background: var(--panel); color: var(--text); font-size: 12px; white-space: pre-wrap; border-radius: 8px; }
+#lb-wrap { max-width: 100vw; max-height: 80vh; overflow: auto; -webkit-overflow-scrolling: touch; }
+#lightbox img { max-width: 96vw; max-height: 78vh; display: block; margin: 0 auto; }
+#lightbox img.zoom { max-width: none; max-height: none; width: 250vw; }
+
+#gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+#gal .g { cursor: pointer; background: var(--panel); border-radius: 8px; overflow: hidden; }
+#gal img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #000; }
+#gal .cap { padding: 6px 8px; font-size: 12px; line-height: 1.35; }
+#gal .cap b { display: block; font-variant-numeric: tabular-nums; }
+#gal .cap span { opacity: .65; word-break: break-all; }
+
+#globe-img { width: 100%; display: block; border-radius: 8px; background: #000; cursor: pointer; }
+#globe-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+#globe-bar input[type=range] { flex: 1; width: auto; }
+#globe-time { font-variant-numeric: tabular-nums; min-width: 9.5em; text-align: right; }
+
+.mrow { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.mrow:first-of-type { border-top: 0; }
+.mrow .addr { flex: 1; min-width: 12em; word-break: break-all; }
+.mrow button.b { padding: 8px 12px; font-size: 14px; }
+.mstat { margin: 0 0 6px; }
+.mstat b { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -103,9 +137,40 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="msg" id="aim-msg"></div>
 </section>
 
+<section id="signal">
+  <div class="card row">
+    <select id="sig-range" style="width:auto">
+      <option value="6">Last 6 hours</option>
+      <option value="24" selected>Last 24 hours</option>
+      <option value="72">Last 3 days</option>
+      <option value="168">Last 7 days</option>
+      <option value="336">Last 14 days</option>
+    </select>
+    <span class="msg" id="sig-state" style="margin-left:auto"></span>
+  </div>
+  <div class="card"><h2>Viterbi errors (lower is better)</h2><canvas id="h-vit"></canvas></div>
+  <div class="card"><h2>Packets per second</h2><canvas id="h-ok"></canvas></div>
+  <div class="card"><h2>Gain</h2><canvas id="h-gain"></canvas></div>
+  <div class="card">
+    <h2>Disk</h2>
+    <div id="disk-bar" style="height:14px;border-radius:7px;background:var(--line);overflow:hidden"><div id="disk-fill" style="height:100%;width:0;background:var(--accent)"></div></div>
+    <p class="msg" id="disk-txt"></p>
+  </div>
+  <div class="card">
+    <h2>Alerts</h2>
+    <p class="msg" id="alert-info">The panel emails you if the signal is lost for 10 minutes, a process has to be restarted, the disk is nearly full, the Pi overheats, or the National Weather Service issues a warning or watch from the New York (OKX) office. If goesrecv or goesproc dies or hangs, the watchdog restarts it.</p>
+    <div class="row">
+      <button class="b ghost" id="alert-test-sig">Send test alert</button>
+      <button class="b ghost" id="alert-test-wx">Check warnings now</button>
+    </div>
+    <p class="msg" id="alert-msg"></p>
+  </div>
+</section>
+
 <section id="control">
   <div class="card">
     <h2>goesrecv – demodulator</h2>
+    <div class="pstate" id="st-goesrecv"></div>
     <div class="row">
       <button class="b go" data-act="goesrecv/start">Start</button>
       <button class="b stop" data-act="goesrecv/stop">Stop</button>
@@ -114,6 +179,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   </div>
   <div class="card">
     <h2>goesproc – image decoder</h2>
+    <div class="pstate" id="st-goesproc"></div>
     <div class="row">
       <button class="b go" data-act="goesproc/start">Start</button>
       <button class="b stop" data-act="goesproc/stop">Stop</button>
@@ -163,6 +229,53 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   </div>
 </section>
 
+<section id="globe">
+  <div class="card row">
+    <select id="globe-region" style="width:auto">
+      <option value="northeast">Northeast US</option>
+      <option value="eastus">East Coast US</option>
+      <option value="nyc">New York City area</option>
+      <option value="namer">North America</option>
+      <option value="gulf">Gulf &amp; Caribbean</option>
+      <option value="samer">South America</option>
+      <option value="globe">Full disk</option>
+      <optgroup label="Night fog (after dark)">
+        <option value="fog_northeast">Fog: Northeast US</option>
+        <option value="fog_eastus">Fog: East Coast US</option>
+        <option value="fog_nyc">Fog: New York City area</option>
+        <option value="fog_namer">Fog: North America</option>
+        <option value="fog_gulf">Fog: Gulf &amp; Caribbean</option>
+        <option value="fog_samer">Fog: South America</option>
+      </optgroup>
+    </select>
+    <select id="globe-range" style="width:auto">
+      <option value="24">Last 24 hours</option>
+      <option value="72">Last 3 days</option>
+      <option value="0">All</option>
+    </select>
+  </div>
+  <div class="card">
+    <img id="globe-img" alt="GOES-19 view">
+    <div id="globe-bar">
+      <button class="b" id="globe-play">Play</button>
+      <button class="b ghost" id="globe-gif">GIF</button>
+      <input type="range" id="globe-slider" min="0" max="0" value="0">
+      <span class="msg" id="globe-time"></span>
+    </div>
+    <p class="msg" id="globe-msg"></p>
+  </div>
+</section>
+
+<section id="gallery">
+  <div class="card row">
+    <select id="gal-region" style="width:auto"><option value="">All regions</option></select>
+    <span class="msg" id="gal-count" style="margin-left:auto"></span>
+  </div>
+  <div id="gal"></div>
+  <div class="row" style="margin-top:14px"><button class="b ghost" id="gal-more" style="display:none">Load more</button></div>
+  <p class="msg">Times are shown in your local time zone; the UTC time is in the tooltip. Newest first.</p>
+</section>
+
 <section id="images">
   <div class="card">
     <div class="row">
@@ -172,7 +285,30 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   </div>
   <div id="dirs"></div>
   <div class="files" id="files"></div>
-  <div class="row" style="margin-top:14px"><a class="b ghost" id="zip" href="#">Download this folder (zip)</a></div>
+  <div class="row" style="margin-top:14px"><a class="b ghost" id="zip" href="#" target="_blank" rel="noopener">Download this folder (zip)</a><span class="msg" id="zip-note" style="display:none">Folder zip download is only available in the Safari browser, not the Home Screen app.</span></div>
+</section>
+
+<section id="mail">
+  <div class="card">
+    <h2>Morning briefing email</h2>
+    <p class="mstat" id="m-from"></p>
+    <p class="mstat" id="m-next"></p>
+    <div class="row" style="margin-top:10px">
+      <label for="m-time" style="margin:0">Send time (US Eastern)</label>
+      <input type="time" id="m-time" style="width:auto">
+      <button class="b" id="m-time-save">Save</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Recipients</h2>
+    <div id="m-list"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="email" id="m-add" placeholder="name@example.com" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+      <button class="b" id="m-add-btn">Add</button>
+    </div>
+    <p class="msg" id="m-msg"></p>
+    <p class="msg">Each email includes a note that replying "unsubscribe" stops it; those replies come to the sender's inbox, so remove the address here when someone asks.</p>
+  </div>
 </section>
 
 <section id="logs">
@@ -184,7 +320,16 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 </section>
 
 </main>
-<div id="lightbox"><img id="lb-img"><div class="row"><a class="b" id="lb-dl" href="#">Download</a><button class="b ghost" id="lb-close">Close</button></div></div>
+<div id="lightbox"><div class="row"><button class="b" id="lb-save">Save</button><button class="b" id="lb-mail">Email</button><button class="b ghost" id="lb-close">Close</button></div><div id="lb-wrap"><img id="lb-img"></div><div id="lb-form">
+  <div id="lbm-cap" style="font-weight:600"></div>
+  <div class="msg" style="margin:4px 0 8px">Send this picture to:</div>
+  <div id="lbm-list"></div>
+  <input type="email" id="lbm-other" placeholder="Another address (optional)" autocapitalize="none" autocomplete="off" style="width:100%;margin-top:8px">
+  <input type="text" id="lbm-note" placeholder="Add a note (optional)" maxlength="500" style="width:100%;margin-top:8px">
+  <div class="row" style="margin-top:12px"><button class="b go" id="lbm-send">Send</button><button class="b ghost" id="lbm-cancel">Cancel</button></div>
+  <p class="msg" id="lbm-msg"></p>
+</div>
+<pre id="lb-txt"></pre><span class="msg" id="lb-hint">Tap the image to zoom. Tap Close to return.</span></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -195,7 +340,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['control','Control'],['config','Config'],['images','Images'],['logs','Logs']];
+const TABS = [['aim','Aim'],['signal','Signal'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['mail','Mail'],['logs','Logs']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -208,6 +353,10 @@ function show(id) {
   try { localStorage.tab = id; } catch {}
   if (id === 'config') loadConfig();
   if (id === 'images') loadDir(curPath);
+  if (id === 'gallery') loadGallery(true);
+  if (id === 'globe') loadGlobe();
+  if (id === 'mail') loadMail();
+  if (id === 'signal') loadSignal();
 }
 let startTab = 'aim';
 try { startTab = localStorage.tab || 'aim'; } catch {}
@@ -222,6 +371,14 @@ async function pollStatus() {
       const s = status[n];
       $(el).textContent = `${n}: ${s.running ? (s.external ? 'running (external)' : 'running') : 'stopped'}`;
       $(el).classList.toggle('on', s.running);
+      const up = s.uptime == null ? '' : s.uptime >= 3600 ? ` · up ${Math.floor(s.uptime/3600)} h ${Math.floor(s.uptime%3600/60)} min`
+        : s.uptime >= 60 ? ` · up ${Math.floor(s.uptime/60)} min` : ` · up ${Math.round(s.uptime)} s`;
+      const st = $('#st-' + n);
+      st.textContent = s.running ? `● Running${s.external ? ' (started outside the panel)' : ''}${up}` : '○ Stopped';
+      st.className = 'pstate ' + (s.running ? 'on' : 'off');
+      document.querySelector(`[data-act="${n}/start"]`).disabled = s.running;
+      document.querySelector(`[data-act="${n}/stop"]`).disabled = !s.running;
+      document.querySelector(`[data-act="${n}/restart"]`).disabled = !s.running;
     }
     const sy = status.system;
     $('#p-sys').textContent = `${sy.cpu_temp ? sy.cpu_temp.toFixed(0)+'°C · ' : ''}${fmtBytes(sy.disk_free)} free`;
@@ -238,8 +395,7 @@ document.addEventListener('click', async e => {
   e.target.disabled = true;
   const r = await api('/api/' + a, {});
   $('#ctl-msg').textContent = `${a}: ${r.result || r.error}`;
-  e.target.disabled = false;
-  pollStatus();
+  await pollStatus();
 });
 $('#aim-toggle').onclick = async () => {
   const run = status.goesrecv && status.goesrecv.running;
@@ -385,6 +541,152 @@ $('#sdrtest').onclick = async () => {
     (r.rtl_test ? '\n\n' + r.rtl_test : '');
 };
 
+// ---- views (regional crops + time-lapse)
+let globeFrames = [], globeTimer = null, globeLoadId = 0;
+const gUrl = x => '/file/' + x.path.split('/').map(encodeURIComponent).join('/');
+function showGlobe(i) {
+  const x = globeFrames[i]; if (!x) return;
+  $('#globe-slider').value = i;
+  $('#globe-img').src = gUrl(x);
+  const d = new Date(x.t * 1000);
+  $('#globe-time').textContent = d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' +
+    d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+function stopGlobe() { clearInterval(globeTimer); globeTimer = null; $('#globe-play').textContent = 'Play'; }
+async function loadGlobe() {
+  stopGlobe();
+  const id = ++globeLoadId;
+  const d = await api('/api/gallery?region=' + $('#globe-region').value + '&limit=200');
+  if (id !== globeLoadId) return;
+  const hrs = +$('#globe-range').value, cut = hrs ? Date.now() / 1000 - hrs * 3600 : 0;
+  globeFrames = d.items.filter(x => x.t >= cut).reverse();   // oldest -> newest
+  $('#globe-slider').max = Math.max(globeFrames.length - 1, 0);
+  $('#globe-msg').textContent = globeFrames.length
+    ? `${globeFrames.length} frame${globeFrames.length > 1 ? 's' : ''}. Tap the picture to zoom or save it.`
+    : ($('#globe-region').value.startsWith('fog_')
+        ? 'No fog images yet. They are only made when part of the region is in darkness and the infrared channels have arrived.'
+        : 'No images for this view and time range yet. New ones are built every few minutes as full-disk scans arrive.');
+  $('#globe-img').style.display = globeFrames.length ? '' : 'none';
+  if (globeFrames.length) showGlobe(globeFrames.length - 1);
+}
+$('#globe-region').onchange = loadGlobe;
+$('#globe-range').onchange = loadGlobe;
+$('#globe-slider').oninput = e => { stopGlobe(); showGlobe(+e.target.value); };
+$('#globe-img').onclick = () => { const x = globeFrames[+$('#globe-slider').value]; if (x) lightbox(gUrl(x)); };
+$('#globe-play').onclick = async () => {
+  if (globeTimer) return stopGlobe();
+  if (globeFrames.length < 2) return;
+  const id = globeLoadId, btn = $('#globe-play');
+  btn.disabled = true;
+  let n = 0;                                    // fetch every frame first so playback is smooth
+  await Promise.all(globeFrames.map(x => new Promise(res => {
+    const im = new Image();
+    im.onload = im.onerror = () => { $('#globe-msg').textContent = `Loading ${++n} / ${globeFrames.length}…`; res(); };
+    im.src = gUrl(x);
+  })));
+  btn.disabled = false;
+  if (id !== globeLoadId) return;
+  $('#globe-msg').textContent = `${globeFrames.length} frames. Tap the picture to zoom or save it.`;
+  btn.textContent = 'Pause';
+  let i = +$('#globe-slider').value >= globeFrames.length - 1 ? 0 : +$('#globe-slider').value;
+  showGlobe(i);
+  globeTimer = setInterval(() => { i = (i + 1) % globeFrames.length; showGlobe(i); }, 300);
+};
+
+// ---- signal history
+function hchart(sel, pts, key, color, fixedLo) {
+  const cv = $(sel), dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  const vals = pts.map(p => p[key]).filter(v => v != null);
+  g.font = '11px sans-serif';
+  if (!vals.length) { g.fillStyle = css.getPropertyValue('--muted'); g.fillText('No data for this period yet', 8, 20); return; }
+  let lo = fixedLo ?? Math.min(...vals), hi = Math.max(...vals);
+  if (hi === lo) hi = lo + 1;
+  const t0 = pts[0].t, t1 = Math.max(pts[pts.length - 1].t, t0 + 1), gap = Math.max((t1 - t0) / pts.length * 4, 300);
+  const x = t => 34 + (t - t0) / (t1 - t0) * (w - 40), y = v => h - 16 - (v - lo) / (hi - lo) * (h - 28);
+  g.strokeStyle = css.getPropertyValue('--line'); g.fillStyle = css.getPropertyValue('--muted');
+  g.beginPath(); g.moveTo(34, y(lo)); g.lineTo(w, y(lo)); g.stroke();
+  g.fillText(hi.toFixed(hi < 10 ? 1 : 0), 2, 12); g.fillText(lo.toFixed(lo < 10 && lo % 1 ? 1 : 0), 2, h - 4);
+  const fmt = t => { const d = new Date(t * 1000); return (t1 - t0 > 86400 * 1.5 ? d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' : '') + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); };
+  g.fillText(fmt(t0), 34, h - 3); const lt = fmt(t1); g.fillText(lt, w - g.measureText(lt).width - 2, h - 3);
+  g.strokeStyle = css.getPropertyValue(color); g.lineWidth = 2; g.beginPath();
+  let prev = null;
+  for (const p of pts) {
+    if (p[key] == null) { prev = null; continue; }
+    (prev != null && p.t - prev < gap) ? g.lineTo(x(p.t), y(p[key])) : g.moveTo(x(p.t), y(p[key]));
+    prev = p.t;
+  }
+  g.stroke();
+}
+async function loadSignal() {
+  const d = await api('/api/history?hours=' + $('#sig-range').value);
+  hchart('#h-vit', d.points, 'vit', '--warn'); hchart('#h-ok', d.points, 'ok', '--good', 0); hchart('#h-gain', d.points, 'gain', '--accent');
+  const st = d.state || {};
+  $('#sig-state').textContent = ({locked: '● Locked', lost: '● No signal', stopped: '○ goesrecv stopped'})[st.signal] || '';
+  const sy = (status || {}).system;
+  if (sy) {
+    const used = sy.disk_total - sy.disk_free, f = used / sy.disk_total;
+    $('#disk-fill').style.width = (f * 100).toFixed(0) + '%';
+    $('#disk-fill').style.background = f > 0.9 ? 'var(--bad)' : f > 0.75 ? 'var(--warn)' : 'var(--accent)';
+    $('#disk-txt').textContent = `${fmtBytes(used)} used of ${fmtBytes(sy.disk_total)} (${fmtBytes(sy.disk_free)} free)`;
+  }
+  const bits = [];
+  if (st.last_restart) bits.push(`Last watchdog restart: ${st.last_restart.name}, ${new Date(st.last_restart.t * 1000).toLocaleString()} (${st.last_restart.why})`);
+  if (st.last_alert) bits.push(`Last alert email: ${st.last_alert.subject}, ${new Date(st.last_alert.t * 1000).toLocaleString()}`);
+  $('#alert-msg').textContent = bits.join(' · ');
+}
+$('#sig-range').onchange = loadSignal;
+async function alertTest(kind, btn) {
+  btn.disabled = true; $('#alert-msg').textContent = 'Working…';
+  const r = await api('/api/alerts/test', {kind});
+  $('#alert-msg').textContent = r.result || r.error;
+  btn.disabled = false;
+}
+$('#alert-test-sig').onclick = e => alertTest('signal', e.target);
+$('#alert-test-wx').onclick = e => alertTest('weather', e.target);
+
+// ---- time-lapse GIF
+$('#globe-gif').onclick = async e => {
+  const b = e.target, hrs = +$('#globe-range').value || 72, view = $('#globe-region').value;
+  b.disabled = true; $('#globe-msg').textContent = 'Building the animated GIF (can take up to a minute)…';
+  const u = `/gif/${view}-${hrs}h.gif`;
+  try {
+    const r = await fetch(u);
+    if (!r.ok) { $('#globe-msg').textContent = (await r.json().catch(() => ({}))).error || 'Could not build the GIF.'; }
+    else { await r.blob(); lightbox(u); $('#lb-mail').style.display = 'none'; $('#globe-msg').textContent = ''; }
+  } catch { $('#globe-msg').textContent = 'Could not build the GIF.'; }
+  b.disabled = false;
+};
+
+// ---- gallery
+let galOff = 0;
+const GAL_N = 60;
+async function loadGallery(reset) {
+  if (reset) { galOff = 0; $('#gal').innerHTML = ''; }
+  const reg = $('#gal-region').value;
+  const d = await api(`/api/gallery?offset=${galOff}&limit=${GAL_N}&region=${encodeURIComponent(reg)}`);
+  d.items.forEach(x => {
+    if (reset && !reg && ![...$('#gal-region').options].some(o => o.value === x.region)) {
+      $('#gal-region').add(new Option(x.region, x.region));
+    }
+    const dt = new Date(x.t * 1000);
+    const u = '/file/' + x.path.split('/').map(encodeURIComponent).join('/');
+    const el = document.createElement('div'); el.className = 'g';
+    el.title = dt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC\n' + x.name;
+    el.innerHTML = `<img loading="lazy" src="/thumb/${u.slice(6)}"><div class="cap"><b>${dt.toLocaleDateString([], {month: 'short', day: 'numeric'})} ${dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</b><span>${x.region}${x.chan ? " · ch " + x.chan : ""}</span></div>`;
+    el.onclick = () => lightbox(u);
+    $('#gal').append(el);
+  });
+  galOff += d.items.length;
+  $('#gal-count').textContent = d.total ? `${galOff} of ${d.total} images` : 'No images yet';
+  $('#gal-more').style.display = galOff < d.total ? '' : 'none';
+}
+$('#gal-more').onclick = () => loadGallery(false);
+$('#gal-region').onchange = () => loadGallery(true);
+
 // ---- images
 let curPath = '';
 async function loadDir(p) {
@@ -406,17 +708,116 @@ async function loadDir(p) {
     const u = '/file/' + x.path.split('/').map(encodeURIComponent).join('/');
     el.innerHTML = (x.image ? `<img loading="lazy" src="/thumb/${u.slice(6)}">` : '') +
       `<div>${x.name}<div class="m">${fmtBytes(x.size)} · ${new Date(x.mtime*1000).toLocaleTimeString()}</div></div>`;
-    el.onclick = () => x.image ? lightbox(u) : (location = u + '?dl=1');
+    el.onclick = () => x.image ? lightbox(u) : textViewer(u);
     $('#files').append(el);
   });
   if (d.files.length > 200) $('#files').insertAdjacentHTML('beforeend', `<p class="msg">Showing 200 of ${d.files.length}.</p>`);
   $('#zip').href = '/zip?path=' + encodeURIComponent(p);
   api('/api/storage').then(s => $('#storage').textContent = 'Total stored: ' + fmtBytes(s.bytes));
 }
+let lbUrl = '';
 function lightbox(u) {
-  $('#lb-img').src = u; $('#lb-dl').href = u + '?dl=1'; $('#lightbox').style.display = 'flex';
+  lbUrl = u;
+  $('#lb-txt').style.display = 'none'; $('#lb-wrap').style.display = ''; $('#lb-hint').style.display = '';
+  $('#lb-form').style.display = 'none'; $('#lb-mail').style.display = ''; $('#lb-save').style.display = '';
+  $('#lb-img').classList.remove('zoom'); $('#lb-img').src = u;
+  $('#lightbox').style.display = 'flex';
 }
+async function textViewer(u) {
+  lbUrl = u;
+  $('#lb-form').style.display = 'none'; $('#lb-mail').style.display = 'none';
+  $('#lb-wrap').style.display = 'none'; $('#lb-hint').style.display = 'none';
+  $('#lb-txt').style.display = 'block'; $('#lb-txt').textContent = 'Loading…';
+  $('#lightbox').style.display = 'flex';
+  try { $('#lb-txt').textContent = await (await fetch(u)).text(); }
+  catch { $('#lb-txt').textContent = 'Could not load file.'; }
+}
+$('#lb-img').onclick = () => $('#lb-img').classList.toggle('zoom');
+$('#lb-save').onclick = async () => {
+  const b = $('#lb-save'); b.disabled = true;
+  try {
+    const blob = await (await fetch(lbUrl)).blob();
+    const name = decodeURIComponent(lbUrl.split('/').pop());
+    const f = new File([blob], name, {type: blob.type});
+    if (navigator.canShare && navigator.canShare({files: [f]})) await navigator.share({files: [f]});
+    else $('#lb-hint').textContent = 'Sharing needs HTTPS (open the ts.net address). Or touch and hold the image to save it.';
+  } catch (e) { /* share sheet dismissed */ }
+  b.disabled = false;
+};
+// picture by email, from the viewer
+const lbRel = () => decodeURIComponent(lbUrl.replace(/^\/file\//, ''));
+function lbMailClose() {
+  $('#lb-form').style.display = 'none'; $('#lb-wrap').style.display = ''; $('#lb-hint').style.display = '';
+}
+$('#lb-mail').onclick = async () => {
+  $('#lbm-msg').textContent = ''; $('#lbm-cap').textContent = 'Loading…';
+  $('#lb-wrap').style.display = 'none'; $('#lb-hint').style.display = 'none'; $('#lb-form').style.display = 'block';
+  const [d, m] = await Promise.all([api('/api/mail/describe?path=' + encodeURIComponent(lbRel())), api('/api/mail')]);
+  if (d.error) { $('#lbm-cap').textContent = d.error; return; }
+  $('#lbm-cap').textContent = d.label + ' · ' + d.when;
+  $('#lbm-list').innerHTML = '';
+  (m.recipients || []).forEach(a => {
+    const l = document.createElement('label'), c = document.createElement('input');
+    c.type = 'checkbox'; c.checked = true; c.value = a;
+    l.append(c, a); $('#lbm-list').append(l);
+  });
+  $('#lbm-send').disabled = false;
+};
+$('#lbm-cancel').onclick = lbMailClose;
+$('#lbm-send').onclick = async () => {
+  const to = [...$('#lbm-list').querySelectorAll('input:checked')].map(c => c.value);
+  const other = $('#lbm-other').value.trim(); if (other) to.push(other);
+  if (!to.length) { $('#lbm-msg').textContent = 'Choose at least one recipient.'; return; }
+  $('#lbm-send').disabled = true; $('#lbm-msg').textContent = 'Sending…';
+  const r = await api('/api/mail/image', {path: lbRel(), to, note: $('#lbm-note').value});
+  if (r.error) { $('#lbm-msg').textContent = r.error; $('#lbm-send').disabled = false; return; }
+  $('#lbm-msg').textContent = r.result; $('#lbm-other').value = ''; $('#lbm-note').value = '';
+  setTimeout(lbMailClose, 1400);
+};
 $('#lb-close').onclick = () => $('#lightbox').style.display = 'none';
+
+// ---- mail
+const mailNote = t => { $('#m-msg').textContent = t || ''; };
+function renderMail(d) {
+  $('#m-from').innerHTML = '';
+  $('#m-from').append('Sends from ', Object.assign(document.createElement('b'), {textContent: d.sender}),
+    d.password_ok ? '' : '  -  password file missing, nothing will send');
+  $('#m-next').textContent = 'Next email: ' + d.next_send + (d.last_sent ? '  (last sent ' + d.last_sent + ')' : '  (none sent automatically yet)');
+  if (document.activeElement !== $('#m-time')) $('#m-time').value = d.send_time;
+  $('#m-list').innerHTML = '';
+  d.recipients.forEach(addr => {
+    const row = document.createElement('div'); row.className = 'mrow';
+    const a = document.createElement('span'); a.className = 'addr'; a.textContent = addr;
+    const t = document.createElement('button'); t.className = 'b ghost'; t.textContent = 'Send test';
+    t.onclick = async () => {
+      t.disabled = true; mailNote('Sending test to ' + addr + '…');
+      const r = await api('/api/mail/test', {to: addr});
+      mailNote(r.result || r.error); t.disabled = false;
+    };
+    const x = document.createElement('button'); x.className = 'b stop'; x.textContent = 'Remove';
+    x.disabled = d.recipients.length < 2;
+    x.onclick = async () => {
+      if (!confirm('Remove ' + addr + ' from the list?')) return;
+      const r = await api('/api/mail/recipients', {remove: addr});
+      if (r.error) mailNote(r.error); else { renderMail(r); mailNote('Removed ' + addr); }
+    };
+    row.append(a, t, x); $('#m-list').append(row);
+  });
+  $('#m-add-btn').disabled = d.recipients.length >= d.max;
+}
+async function loadMail() { mailNote(''); try { renderMail(await api('/api/mail')); } catch (e) { mailNote('Could not load mail settings.'); } }
+$('#m-add-btn').onclick = async () => {
+  const v = $('#m-add').value.trim(); if (!v) return;
+  const r = await api('/api/mail/recipients', {add: v});
+  if (r.error) return mailNote(r.error);
+  $('#m-add').value = ''; renderMail(r); mailNote('Added ' + v + '. Use "Send test" to check it arrives.');
+};
+$('#m-add').onkeydown = e => { if (e.key === 'Enter') $('#m-add-btn').click(); };
+$('#m-time-save').onclick = async () => {
+  const r = await api('/api/mail/time', {send_time: $('#m-time').value});
+  if (r.error) return mailNote(r.error);
+  renderMail(r); mailNote('Send time saved.');
+};
 
 // ---- logs
 async function pollLog() {
@@ -427,6 +828,9 @@ async function pollLog() {
   if (atEnd) out.scrollTop = out.scrollHeight;
 }
 
+if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
+  $('#zip').style.display = 'none'; $('#zip-note').style.display = '';
+}
 show(startTab);
 pollStatus(); setInterval(pollStatus, 3000);
 setInterval(pollStats, 1000);

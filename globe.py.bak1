@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Build a color full-disk "globe" from goesproc's per-channel PNGs.
+
+Day side: natural color from C01 (blue), C02 (red), C03 (veggie, helps the
+green). Night side: C13 clean-window infrared in blue-gray. The two are blended
+by the sun's elevation at each pixel, so the terminator is visible. If the
+visible channels haven't been received, the day side falls back to C13 too.
+
+Writes ~/goes/data/goes19/globe/YYYY-MM-DD/GOES19_FD_GLOBE_<scan start>Z.jpg.
+Needs numpy + Pillow. Safe to run from cron; one run at a time.
+"""
+import argparse
+import datetime as dt
+import fcntl
+import math
+import re
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+Image.MAX_IMAGE_PIXELS = None
+
+DATA = Path("/home/pi/goes/data/goes19")
+FD = DATA / "fd"
+OUT = DATA / "globe"
+
+SUB_LON = -75.2                 # GOES-19 (East) sub-satellite longitude
+H = 42164160.0                  # distance from Earth's center, m
+R_EQ, R_POL = 6378137.0, 6356752.31414
+X0, STEP = -0.151844, 0.000056  # fixed-grid scan angle of pixel 0 / per pixel (2 km, 5424 px)
+NATIVE = 5424
+MAX_AGE = dt.timedelta(minutes=75)  # how far apart channels may be and still be combined
+
+NAME_RE = re.compile(r"CMIPF-M\dC(\d{2})_G19_s(\d{4})(\d{3})(\d{2})(\d{2})(\d{2})")
+
+
+def scan_files():
+    """{channel: [(scan start, path), ...]} newest last."""
+    found = {}
+    for p in FD.rglob("*.png"):
+        m = NAME_RE.search(p.name)
+        if not m:
+            continue
+        y, doy, hh, mm, ss = map(int, m.groups()[1:])
+        t = dt.datetime(y, 1, 1, hh, mm, ss, tzinfo=dt.timezone.utc) + dt.timedelta(days=doy - 1)
+        found.setdefault(m.group(1), []).append((t, p))
+    for v in found.values():
+        v.sort()
+    return found
+
+
+def nearest(files, ch, t):
+    best = min(files.get(ch, []), key=lambda tp: abs(tp[0] - t), default=None)
+    return best[1] if best and abs(best[0] - t) <= MAX_AGE else None
+
+
+def load(path, size):
+    """Channel PNG -> float32 0..1 array at the output size."""
+    im = Image.open(path)
+    f = im.width // size
+    im = im.reduce(f) if f > 1 else im
+    if im.size != (size, size):
+        im = im.resize((size, size), Image.BILINEAR)
+    return np.asarray(im, dtype=np.float32) / 255.0
+
+
+def geometry(size):
+    """lat, lon (radians; NaN off-disk) for the output pixel centers."""
+    f = NATIVE / size
+    idx = (np.arange(size) + 0.5) * f - 0.5
+    x = (X0 + idx * STEP)[None, :]
+    y = (-X0 - idx * STEP)[:, None]
+    cx, sx_, cy, sy_ = np.cos(x), np.sin(x), np.cos(y), np.sin(y)
+    k = (R_EQ / R_POL) ** 2
+    a = sx_ ** 2 + cx ** 2 * (cy ** 2 + k * sy_ ** 2)
+    b = -2.0 * H * cx * cy
+    c = H ** 2 - R_EQ ** 2
+    disc = b ** 2 - 4 * a * c
+    ok = disc > 0
+    rs = (-b - np.sqrt(np.where(ok, disc, 0))) / (2 * a)
+    px = rs * cx * cy
+    py = -rs * sx_
+    pz = rs * cx * sy_
+    lat = np.arctan(k * pz / np.sqrt((H - px) ** 2 + py ** 2))
+    lon = math.radians(SUB_LON) - np.arctan(py / (H - px))
+    return np.where(ok, lat, np.nan), np.where(ok, lon, np.nan), ok
+
+
+def subsolar(t):
+    """Sub-solar latitude/longitude in radians (low-precision almanac formulas)."""
+    n = (t - dt.datetime(2000, 1, 1, 12, tzinfo=dt.timezone.utc)).total_seconds() / 86400.0
+    L = math.radians(280.460 + 0.9856474 * n)
+    g = math.radians(357.528 + 0.9856003 * n)
+    lam = L + math.radians(1.915) * math.sin(g) + math.radians(0.020) * math.sin(2 * g)
+    eps = math.radians(23.439 - 0.0000004 * n)
+    dec = math.asin(math.sin(eps) * math.sin(lam))
+    ra = math.atan2(math.cos(eps) * math.sin(lam), math.cos(lam))
+    gmst = math.radians((280.46061837 + 360.98564736629 * n) % 360)
+    lon = (ra - gmst + math.pi) % (2 * math.pi) - math.pi
+    return dec, lon
+
+
+def smoothstep(e0, e1, v):
+    u = np.clip((v - e0) / (e1 - e0), 0, 1)
+    return u * u * (3 - 2 * u)
+
+
+def stretch(a, mask, lo=1, hi=99.5):
+    p0, p1 = np.percentile(a[mask], [lo, hi])
+    return np.clip((a - p0) / max(p1 - p0, 1e-6), 0, 1)
+
+
+def build(t, files, size):
+    lat, lon, disc = geometry(size)
+    slat, slon = subsolar(t)
+    cosz = np.sin(lat) * math.sin(slat) + np.cos(lat) * math.cos(slat) * np.cos(lon - slon)
+    cosz = np.where(disc, cosz, -1)
+    # full day above ~80 deg zenith angle, full night below ~100: soft twilight band
+    day = smoothstep(math.cos(math.radians(100)), math.cos(math.radians(80)), cosz)[..., None]
+
+    p13 = nearest(files, "13", t)
+    ir = stretch(load(p13, size), disc) if p13 else np.zeros((size, size), np.float32)
+
+    # night: infrared clouds in a dim blue-gray
+    night = np.dstack([0.10 + 0.55 * ir, 0.13 + 0.62 * ir, 0.22 + 0.78 * ir]) * 0.9
+
+    pr, pb, pn = (nearest(files, c, t) for c in ("02", "01", "03"))
+    if pr and pb:
+        red, blue = load(pr, size), load(pb, size)
+        veg = load(pn, size) if pn else None
+        green = 0.45 * red + 0.45 * blue + (0.10 * veg if veg is not None else 0.10 * (red + blue) / 2)
+        rgb = np.dstack([red, green, blue])
+        lit = disc & (cosz > 0.25)
+        gain = 1.0 / max(float(np.percentile(rgb[lit], 99.0)) if lit.any() else 1.0, 1e-3)
+        rgb = np.clip(rgb * min(gain, 3.0), 0, 1) ** (1 / 1.8)
+        mode = "color"
+    else:
+        rgb = np.dstack([ir * 0.95, ir * 0.97, ir]) * 0.9 + 0.04
+        mode = "infrared (visible channels not received yet)"
+
+    out = np.where(disc[..., None], day * rgb + (1 - day) * night, 0.0)
+    img = Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8))
+    d = ImageDraw.Draw(img)
+    fs = max(14, size // 70)
+    try:
+        font = ImageFont.load_default(size=fs)
+    except TypeError:
+        font = ImageFont.load_default()
+    d.text((14, 12), "GOES-19", fill=(235, 240, 250), font=font)
+    d.text((14, 12 + fs * 1.5), f"{t:%Y-%m-%d %H:%M} UTC", fill=(200, 210, 225), font=font)
+    if mode != "color":
+        d.text((14, size - 12 - fs * 1.4), "infrared (visible channels not received yet)",
+               fill=(150, 160, 175), font=font)
+    return img, mode
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--size", type=int, default=1808, help="output pixels (divisor of 5424)")
+    ap.add_argument("--force", action="store_true", help="rebuild even if the output exists")
+    ap.add_argument("--time", help="build for the scan at this start time (YYYYmmddTHHMMSS, UTC)")
+    a = ap.parse_args()
+
+    lock = open("/tmp/goes-globe.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+
+    files = scan_files()
+    if not files:
+        print("no full-disk images yet")
+        return 0
+    # Anchor on the visible red channel when we have it, else the infrared one.
+    base = "02" if files.get("02") else "13"
+    if a.time:
+        t = dt.datetime.strptime(a.time, "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)
+    else:
+        t = files[base][-1][0]
+    dest = OUT / f"{t:%Y-%m-%d}" / f"GOES19_FD_GLOBE_{t:%Y%m%dT%H%M%S}Z.jpg"
+    if dest.exists() and not a.force:
+        return 0
+    img, mode = build(t, files, a.size)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp.jpg")
+    img.save(tmp, "JPEG", quality=88)
+    tmp.rename(dest)
+    print(f"wrote {dest} ({mode})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

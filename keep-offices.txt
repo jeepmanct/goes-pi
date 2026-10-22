@@ -1,0 +1,36 @@
+# NWS issuing offices whose EMWIN text bulletins are kept (subject to the overall size cap).
+# Everything else is deleted after EMWIN_DAYS. One 4-letter code per line.
+# Northeast
+KOKX
+KALY
+KBGM
+KBUF
+KBOX
+KGYX
+KCAR
+KBTV
+KPHI
+KCTP
+KPBZ
+# Mid-Atlantic and Southeast coast
+KLWX
+KAKQ
+KRNK
+KRAH
+KMHX
+KILM
+KCAE
+KCHS
+KGSP
+KJAX
+KMLB
+KMFL
+KKEY
+KTBW
+# National centers (hurricanes, fronts, severe weather, hourly obs/forecasts)
+KNHC
+KWNH
+KWNO
+KWNS
+KNES
+KWBC
