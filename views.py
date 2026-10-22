@@ -20,7 +20,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -236,6 +236,60 @@ def fog_rgb(bt, box, f):
     return np.dstack([r, g, b])
 
 
+_MASKS = {}
+
+
+def land_mask(box, f, shape):
+    """0..1 float array (1 = land) for the window, rasterised from Natural Earth land minus lakes."""
+    key = (box, f)
+    if key in _MASKS:
+        return _MASKS[key]
+    r0, _r1, c0, _c1 = box
+    h, w = shape
+    img = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(img)
+
+    def draw(path, fill):
+        p = MAPS / path
+        if not p.exists():
+            return
+        for ft in json.loads(p.read_text())["features"]:
+            g = ft["geometry"]
+            polys = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+            for poly in polys:
+                for i, ring in enumerate(poly):
+                    a = np.asarray(ring, dtype=np.float64)[:, :2]
+                    c, r, vis = to_pixels(a[:, 1], a[:, 0])
+                    pts = list(zip(((c - c0 + 0.5) / f)[vis].tolist(), ((r - r0 + 0.5) / f)[vis].tolist()))
+                    if len(pts) >= 3:
+                        d.polygon(pts, fill=(fill if i == 0 else 255 - fill))
+    draw("ne_50m_land.geojson", 255)
+    draw("ne_50m_lakes.geojson", 0)
+    m = np.asarray(img.filter(ImageFilter.GaussianBlur(0.7)), dtype=np.float32) / 255.0
+    _MASKS.clear()          # one window at a time is plenty
+    _MASKS[key] = m
+    return m
+
+
+def synthetic_color(red, ir, disc, cosz, land):
+    """Plausible color from C02 brightness, C13 coldness (ir, high = cold) and a land/ocean map.
+    Not real color: clouds are white, land green or tan, ocean blue, all shaded by C02."""
+    lit = disc & (cosz > 0.25)
+    ref = float(np.percentile(red[lit], 99.0)) if lit.any() else 1.0
+    rn = np.clip(red / max(ref, 1e-3), 0, 1)
+    cloud = smoothstep(0.28, 0.55, rn)
+    cloud = cloud * np.where(land > 0.5, 0.35 + 0.65 * smoothstep(0.12, 0.40, ir), 1.0)
+    dry = 0.5 * smoothstep(0.20, 0.45, rn) * (1 - smoothstep(0.25, 0.55, ir))     # bright but warm land = desert
+    green, tan = np.array([0.24, 0.36, 0.19]), np.array([0.58, 0.48, 0.30])
+    landc = green * (1 - dry[..., None]) + tan * dry[..., None]
+    landc = landc * (0.55 + 2.2 * rn)[..., None]
+    sea = np.array([0.04, 0.13, 0.27]) * (0.8 + 3.5 * rn)[..., None]
+    surf = land[..., None] * landc + (1 - land[..., None]) * sea
+    white = np.array([0.97, 0.98, 1.0]) * (0.55 + 0.5 * rn)[..., None]
+    rgb = surf * (1 - cloud[..., None]) + white * cloud[..., None]
+    return np.clip(rgb, 0, 1) ** (1 / 1.25)
+
+
 def compose(chans, box, f, t, bt=None):
     """chans: {'13': uint8 array, '02': ..., '01': ..., '03': ...} (full native). Returns (rgb float, mode)."""
     lat, lon, disc = grid_latlon(box, f)
@@ -256,13 +310,14 @@ def compose(chans, box, f, t, bt=None):
             veg = window(chans["03"], box, f) if "03" in chans else (red + blue) / 2
             green = 0.45 * red + 0.45 * blue + 0.10 * veg
             mode = "color"
+            rgb = np.dstack([red, green, blue])
         else:
-            blue = green = red
-            mode = "visible (C02 only, color needs C01)"
-        rgb = np.dstack([red, green, blue])
+            rgb = synthetic_color(red, ir, disc, cosz, land_mask(box, f, disc.shape))
+            mode = "synthetic color (C02 + IR + map)"
         lit = disc & (cosz > 0.25)
-        gain = 1.0 / max(float(np.percentile(rgb[lit], 99.0)) if lit.any() else 1.0, 1e-3)
-        rgb = np.clip(rgb * min(gain, 3.0), 0, 1) ** (1 / 1.8)
+        if mode == "color":
+            gain = 1.0 / max(float(np.percentile(rgb[lit], 99.0)) if lit.any() else 1.0, 1e-3)
+            rgb = np.clip(rgb * min(gain, 3.0), 0, 1) ** (1 / 1.8)
     else:
         rgb = np.dstack([ir * 0.95, ir * 0.97, ir]) * 0.9 + 0.04
         mode = "infrared (no visible scan at this time)"
