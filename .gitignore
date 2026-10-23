@@ -18,3 +18,5 @@ share-visits.json
 mail.conf.bak*
 cache/
 *.bak[0-9]*
+.digest-weekly-sent
+.digest-weekly-failed
