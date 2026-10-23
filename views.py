@@ -27,6 +27,8 @@ Image.MAX_IMAGE_PIXELS = None
 DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
+CACHE = Path("/home/pi/goes/cache/views")   # static per-region geometry, rebuilt if GEO_VER changes
+GEO_VER = 1
 LOCAL = ZoneInfo("America/New_York")
 
 SUB_LON = -75.0                 # projection origin in the HRIT headers (geos(-75.0)); coastline fit peaks here, not at -75.2
@@ -40,7 +42,7 @@ NYC = (40.71, -74.01)
 
 # bbox = (lat_min, lat_max, lon_min, lon_max); f = downsample factor, scale = upsample after
 REGIONS = {
-    "globe":   dict(name="FD_GLOBE", label="Full disk", bbox=None, f=3, scale=1, borders=False, nyc=False),
+    "globe":   dict(name="FD_GLOBE", label="Full disk", bbox=None, f=3, scale=1, borders=False, nyc=False, globe=True),
     "namer":   dict(name="NORTH_AMERICA", label="North America", bbox=(12, 62, -140, -48), f=2, scale=1, borders=True, nyc=True),
     "samer":   dict(name="SOUTH_AMERICA", label="South America", bbox=(-56, 14, -86, -32), f=2, scale=1, borders=True, nyc=False),
     "gulf":    dict(name="GULF_CARIBBEAN", label="Gulf and Caribbean", bbox=(8, 33, -100, -56), f=1, scale=1, borders=True, nyc=False),
@@ -50,7 +52,7 @@ REGIONS = {
 }
 def _fog(key, label, name):
     base = REGIONS[key]
-    return dict(base, name=name, label=label, night="fog")
+    return dict(base, name=name, label=label, night="fog", geo=key)
 
 
 REGIONS.update({
@@ -224,7 +226,7 @@ def stretch(a, mask, lo=1, hi=99.5):
     if not mask.any():
         return np.zeros_like(a)
     p0, p1 = np.percentile(a[mask], [lo, hi])
-    return np.clip((a - p0) / max(p1 - p0, 1e-6), 0, 1)
+    return np.clip((a - p0) / max(p1 - p0, 1e-6), 0, 1).astype(np.float32)
 
 
 def fog_rgb(bt, box, f):
@@ -271,30 +273,35 @@ def land_mask(box, f, shape):
     return m
 
 
+GAMMA_125 = (np.linspace(0, 1, 4096) ** (1 / 1.25)).astype(np.float32)
+
+
 def synthetic_color(red, ir, disc, cosz, land):
     """Plausible color from C02 brightness, C13 coldness (ir, high = cold) and a land/ocean map.
     Not real color: clouds are white, land green or tan, ocean blue, all shaded by C02."""
+    red, ir, land = (np.asarray(a, np.float32) for a in (red, ir, land))
     lit = disc & (cosz > 0.25)
     ref = float(np.percentile(red[lit], 99.0)) if lit.any() else 1.0
-    rn = np.clip(red / max(ref, 1e-3), 0, 1)
+    rn = np.clip(red / max(ref, 1e-3), 0, 1).astype(np.float32)
     cloud = smoothstep(0.28, 0.55, rn)
     cloud = cloud * np.where(land > 0.5, 0.35 + 0.65 * smoothstep(0.12, 0.40, ir), 1.0)
     dry = 0.5 * smoothstep(0.20, 0.45, rn) * (1 - smoothstep(0.25, 0.55, ir))     # bright but warm land = desert
-    green, tan = np.array([0.24, 0.36, 0.19]), np.array([0.58, 0.48, 0.30])
+    green, tan = (np.array(c, np.float32) for c in ([0.24, 0.36, 0.19], [0.58, 0.48, 0.30]))
     landc = green * (1 - dry[..., None]) + tan * dry[..., None]
     landc = landc * (0.55 + 2.2 * rn)[..., None]
-    sea = np.array([0.04, 0.13, 0.27]) * (0.8 + 3.5 * rn)[..., None]
+    sea = np.array([0.04, 0.13, 0.27], np.float32) * (0.8 + 3.5 * rn)[..., None]
     surf = land[..., None] * landc + (1 - land[..., None]) * sea
-    white = np.array([0.97, 0.98, 1.0]) * (0.55 + 0.5 * rn)[..., None]
+    white = np.array([0.97, 0.98, 1.0], np.float32) * (0.55 + 0.5 * rn)[..., None]
     rgb = surf * (1 - cloud[..., None]) + white * cloud[..., None]
-    return np.clip(rgb, 0, 1) ** (1 / 1.25)
+    return GAMMA_125[(np.clip(rgb, 0, 1) * 4095).astype(np.uint16)]
 
 
-def compose(chans, box, f, t, bt=None):
+def compose(chans, box, f, t, geo, bt=None):
     """chans: {'13': uint8 array, '02': ..., '01': ..., '03': ...} (full native). Returns (rgb float, mode)."""
-    lat, lon, disc = grid_latlon(box, f)
+    disc = geo["disc"]
     slat, slon = subsolar(t)
-    cosz = np.sin(lat) * math.sin(slat) + np.cos(lat) * math.cos(slat) * np.cos(lon - slon)
+    cosz = geo["sinlat"] * math.sin(slat) + geo["coslat"] * math.cos(slat) * (
+        geo["coslon"] * math.cos(slon) + geo["sinlon"] * math.sin(slon))
     cosz = np.where(disc, cosz, -1)
     day = smoothstep(math.cos(math.radians(100)), math.cos(math.radians(80)), cosz)[..., None]
 
@@ -312,7 +319,7 @@ def compose(chans, box, f, t, bt=None):
             mode = "color"
             rgb = np.dstack([red, green, blue])
         else:
-            rgb = synthetic_color(red, ir, disc, cosz, land_mask(box, f, disc.shape))
+            rgb = synthetic_color(red, ir, disc, cosz, geo["land"])
             mode = "synthetic color (C02 + IR + map)"
         lit = disc & (cosz > 0.25)
         if mode == "color":
@@ -356,27 +363,109 @@ def draw_lines(draw, kind, box, f, scale, color, width):
                 draw.line((pts[i], pts[i + 1]), fill=color, width=width)
 
 
-def annotate(img, spec, box, f, t, mode):
+def font_for(width):
+    fs = max(14, width // 60)
+    try:
+        return fs, ImageFont.load_default(size=fs)
+    except TypeError:
+        return fs, ImageFont.load_default()
+
+
+def graticule(draw, box, f, color):
+    """Latitude/longitude lines every 15 degrees (full disk only)."""
+    r0, _r1, c0, _c1 = box
+    for lat in range(-75, 90, 15):
+        lons = np.linspace(-180, 180, 721)
+        _draw_poly(draw, np.full_like(lons, lat), lons, box, f, 1, color)
+    for lon in range(-180, 180, 15):
+        lats = np.linspace(-85, 85, 341)
+        _draw_poly(draw, lats, np.full_like(lats, lon), box, f, 1, color)
+
+
+def _draw_poly(draw, lat, lon, box, f, scale, color):
+    c, r, vis = to_pixels(lat, lon)
+    x, y = (c - box[2] + 0.5) / f * scale, (r - box[0] + 0.5) / f * scale
+    pts = list(zip(x.tolist(), y.tolist()))
+    for i in range(len(pts) - 1):
+        if vis[i] and vis[i + 1]:
+            draw.line((pts[i], pts[i + 1]), fill=color, width=1)
+
+
+def build_overlay(spec, box, f, size, disc):
+    """Everything on top of the picture that does not change between scans, as RGBA."""
     scale = spec["scale"]
-    ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ov = Image.new("RGBA", size, (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
-    lw = 2 if scale >= 2 or img.width > 2000 else 1
+    lw = 2 if scale >= 2 or size[0] > 2000 else 1
+    if spec.get("globe"):
+        # soft atmosphere glow, a thin rim just inside the limb, a few stars
+        m = Image.fromarray((disc * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(max(6, size[0] // 110)))
+        b = np.asarray(m, dtype=np.float32) / 255.0
+        a = np.where(disc, (1 - b) * 0.30, b * 0.75)
+        a = np.clip(a, 0, 1)
+        glow = np.zeros(size[::-1] + (4,), np.uint8)
+        glow[..., 0], glow[..., 1], glow[..., 2], glow[..., 3] = 110, 165, 255, (a * 255).astype(np.uint8)
+        ov = Image.alpha_composite(ov, Image.fromarray(glow, "RGBA"))
+        d = ImageDraw.Draw(ov)
+        rng = np.random.default_rng(19)
+        for _ in range(260):
+            x, y = int(rng.integers(0, size[0])), int(rng.integers(0, size[1]))
+            if not disc[min(y, disc.shape[0] - 1), min(x, disc.shape[1] - 1)] and b[y, x] < 0.02:
+                v = int(rng.integers(70, 190))
+                d.point((x, y), fill=(v, v, min(255, v + 25), 255))
+        graticule(d, box, f, (170, 200, 255, 38))
+        draw_lines(d, "coastline", box, f, scale, (255, 235, 140, 120), 1)
     if spec["borders"]:
         draw_lines(d, "admin_1_states_provinces_lines", box, f, scale, (255, 255, 255, 60), lw)
         draw_lines(d, "admin_0_boundary_lines_land", box, f, scale, (255, 235, 140, 150), lw)
         draw_lines(d, "coastline", box, f, scale, (255, 235, 140, 150), lw)
-    fs = max(14, img.width // 60)
-    try:
-        font = ImageFont.load_default(size=fs)
-    except TypeError:
-        font = ImageFont.load_default()
+    fs, font = font_for(size[0])
     if spec["nyc"]:
         c, r, vis = to_pixels(np.array([NYC[0]]), np.array([NYC[1]]))
         x, y = (c[0] - box[2] + 0.5) / f * scale, (r[0] - box[0] + 0.5) / f * scale
-        if 0 <= x < img.width and 0 <= y < img.height:
+        if 0 <= x < size[0] and 0 <= y < size[1]:
             rad = max(5, fs // 3)
             d.ellipse((x - rad, y - rad, x + rad, y + rad), outline=(255, 90, 90, 230), width=2)
             d.text((x + rad + 4, y - fs * 0.6), "NYC", fill=(255, 170, 170, 245), font=font, **OUTLINE)
+    return ov
+
+
+def geometry(key, spec, box):
+    """Per-region constants (pixel lat/lon, disc mask, land mask, overlay), cached on disk.
+    Only the sun angle and the imagery change between scans, so none of this is redone per frame."""
+    f, scale = spec["f"], spec["scale"]
+    gk = spec.get("geo", key)
+    npz, png = CACHE / f"{gk}.v{GEO_VER}.npz", CACHE / f"{gk}.v{GEO_VER}.png"
+    if npz.exists() and png.exists():
+        try:
+            with np.load(npz) as z:
+                geo = {k: z[k] for k in z.files}
+            geo["overlay"] = Image.open(png).convert("RGBA")
+            geo["land"] = geo["land"].astype(np.float32) / 255.0
+            return geo
+        except (OSError, ValueError, KeyError):
+            pass
+    lat, lon, disc = grid_latlon(box, f)
+    geo = dict(sinlat=np.sin(lat).astype(np.float32), coslat=np.cos(lat).astype(np.float32),
+               sinlon=np.sin(lon).astype(np.float32), coslon=np.cos(lon).astype(np.float32), disc=disc,
+               land=(land_mask(box, f, disc.shape) * 255).astype(np.uint8))
+    size = (disc.shape[1] * scale, disc.shape[0] * scale)
+    ov = build_overlay(spec, box, f, size, np.kron(disc, np.ones((scale, scale), bool)) if scale > 1 else disc)
+    CACHE.mkdir(parents=True, exist_ok=True)
+    tmp = npz.with_name(npz.name + ".tmp.npz")
+    np.savez(tmp, **geo)
+    tmp.replace(npz)
+    ov.save(png.with_name(png.name + ".tmp.png"), "PNG")
+    png.with_name(png.name + ".tmp.png").replace(png)
+    geo["land"] = geo["land"].astype(np.float32) / 255.0
+    geo["overlay"] = ov
+    return geo
+
+
+def annotate(img, geo, spec, t, mode):
+    ov = geo["overlay"].copy()
+    d = ImageDraw.Draw(ov)
+    fs, font = font_for(img.width)
     local = t.astimezone(LOCAL)
     d.text((14, 12), f"GOES-19  {spec['label']}", fill=(235, 240, 250, 255), font=font, **OUTLINE)
     d.text((14, 12 + fs * 1.4), f"{t:%Y-%m-%d %H:%M} UTC  ·  {local:%-I:%M %p %Z}",
@@ -421,11 +510,12 @@ def build_scan(t, files, wanted):
         if spec.get("night") == "fog" and bt is None:
             continue
         box = region_box(spec["bbox"], spec["f"])
-        rgb, mode = compose(chans, box, spec["f"], t, bt if spec.get("night") == "fog" else None)
+        geo = geometry(key, spec, box)
+        rgb, mode = compose(chans, box, spec["f"], t, geo, bt if spec.get("night") == "fog" else None)
         img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
         if spec["scale"] > 1:
             img = img.resize((img.width * spec["scale"], img.height * spec["scale"]), Image.LANCZOS)
-        img = annotate(img, spec, box, spec["f"], t, mode)
+        img = annotate(img, geo, spec, t, mode)
         dest = out_path(key, spec, t)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".tmp.jpg")

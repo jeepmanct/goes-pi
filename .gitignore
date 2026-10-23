@@ -16,3 +16,5 @@ share-tokens.json
 share-visits.json
 .digest-skipnote
 mail.conf.bak*
+cache/
+*.bak[0-9]*

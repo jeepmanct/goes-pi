@@ -336,7 +336,11 @@ def dir_size(p):
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
 
 
+THUMB_WIDTHS = (360, 720)       # 360 = gallery grid, 720 = time-lapse frames
+
+
 def thumb(rel, width=360):
+    width = width if width in THUMB_WIDTHS else 360
     src = safe_path(rel)
     if Image is None or src.suffix.lower() not in IMAGE_EXT:
         return src
@@ -348,8 +352,42 @@ def thumb(rel, width=360):
             im.draft("RGB", (width * 2, width * 2))
             im = im.convert("RGB")
             im.thumbnail((width, width))
-            im.save(dst, "JPEG", quality=80)
+            tmp = dst.with_name(dst.name + ".tmp")
+            im.save(tmp, "JPEG", quality=80)
+            tmp.replace(dst)
     return dst
+
+
+def prewarm_thumbs():
+    """Background: render thumbnails for new images before anyone asks, so the gallery and the
+    time-lapse never wait on a 5424 px PNG. Rendered views (JPEG) get both sizes; raw scans only the grid size."""
+    while True:
+        try:
+            items = gallery(0, 400)["items"]
+            made = 0
+            for i, x in enumerate(items):
+                view = x["region"] not in ("fd", "m1", "m2") and x["name"].lower().endswith((".jpg", ".jpeg"))
+                if not view and i >= 40:
+                    continue
+                for w in (THUMB_WIDTHS if view else THUMB_WIDTHS[:1]):
+                    try:
+                        src = safe_path(x["path"])
+                        dst = THUMBS / f"{hashlib.md5(str(src).encode()).hexdigest()}_{int(src.stat().st_mtime)}_{w}.jpg"
+                        if not dst.exists():
+                            thumb(x["path"], w)
+                            made += 1
+                            time.sleep(0.2)
+                    except (OSError, ValueError):
+                        pass
+                if made >= 80:
+                    break
+            cutoff = time.time() - 9 * 86400          # sources are pruned after ~7 days
+            for p in THUMBS.glob("*.jpg"):
+                if p.stat().st_mtime < cutoff:
+                    p.unlink(missing_ok=True)
+        except Exception as e:                        # never let the warmer die
+            print("thumb prewarm:", e, flush=True)
+        time.sleep(60)
 
 
 # ---- morning email settings ------------------------------------------------
@@ -559,6 +597,43 @@ def make_gif(view, hours):
     return out
 
 
+MP4_LOCK = threading.Lock()
+
+
+def make_mp4(view, hours):
+    """An H.264 time-lapse of a rendered view's last `hours` hours (cached 10 min). Returns its path."""
+    if not re.fullmatch(r"[a-z_]{2,20}", view) or view in ("fd", "m1", "m2") \
+            or not (DATA_DIR / "goes19" / view).is_dir():
+        raise ValueError("unknown view")
+    hours = min(max(hours, 1), 72)
+    GIF_DIR.mkdir(parents=True, exist_ok=True)
+    out = GIF_DIR / f"{view}-{int(hours)}h.mp4"
+    if out.exists() and time.time() - out.stat().st_mtime < 600:
+        return out
+    with MP4_LOCK:
+        if out.exists() and time.time() - out.stat().st_mtime < 600:
+            return out
+        now = datetime.datetime.now(datetime.timezone.utc)
+        fr = [p for t, p in digest_module().frames(view) if now - t <= datetime.timedelta(hours=hours)]
+        if len(fr) < 3:
+            raise ValueError("not enough frames in that time range yet")
+        pick = fr[:: max(1, -(-len(fr) // 150))][-150:]
+        lst = GIF_DIR / f"{view}-{int(hours)}h.txt"
+        lines = "".join(f"file '{p}'\nduration 0.12\n" for p in pick) + f"file '{pick[-1]}'\nduration 1.5\nfile '{pick[-1]}'\n"
+        lst.write_text(lines)
+        tmp = out.with_name(out.stem + ".tmp.mp4")
+        r = subprocess.run(["nice", "-n", "10", "ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                            "-i", str(lst), "-vf", "scale=960:-2:flags=lanczos,format=yuv420p", "-r", "12",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-movflags", "+faststart",
+                            str(tmp)], capture_output=True, text=True, timeout=300)
+        lst.unlink(missing_ok=True)
+        if r.returncode:
+            tmp.unlink(missing_ok=True)
+            raise ValueError("could not build the video: " + r.stderr.strip()[-200:])
+        tmp.replace(out)
+    return out
+
+
 # ---- SDR detection ------------------------------------------------------
 
 def sdr_check():
@@ -655,9 +730,27 @@ class Handler(BaseHTTPRequestHandler):
     def send_file(self, path, download=False):
         ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         size = path.stat().st_size
-        self.send_response(200)
+        start, end, code = 0, size - 1, 200
+        m = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))   # iOS needs this for video
+        if m and (m.group(1) or m.group(2)) and size:
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start = max(size - int(m.group(2)), 0)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            code = 206
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(size))
+        self.send_header("Accept-Ranges", "bytes")
+        if code == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(end - start + 1))
         if download:
             self.send_header("Content-Disposition",
                              f'attachment; filename="{path.name}"')
@@ -667,7 +760,14 @@ class Handler(BaseHTTPRequestHandler):
                              "no-cache" if path.suffix == ".html" else "max-age=3600")
         self.end_headers()
         with open(path, "rb") as f:
-            shutil.copyfileobj(f, self.wfile)
+            f.seek(start)
+            left = end - start + 1
+            while left > 0:
+                buf = f.read(min(65536, left))
+                if not buf:
+                    break
+                self.wfile.write(buf)
+                left -= len(buf)
 
     def via_tailscale(self):
         """`tailscale serve` connects from localhost and adds the signed-in tailnet
@@ -746,12 +846,15 @@ class Handler(BaseHTTPRequestHandler):
             gm = re.fullmatch(r"/gif/([a-z_]+)-(\d+)h\.gif", u.path)
             if gm:
                 return self.send_file(make_gif(gm.group(1), float(gm.group(2))))
+            mm = re.fullmatch(r"/mp4/([a-z_]+)-(\d+)h\.mp4", u.path)
+            if mm:
+                return self.send_file(make_mp4(mm.group(1), float(mm.group(2))))
             if u.path == "/api/storage":
                 return self.send_json({"bytes": dir_size(DATA_DIR) if DATA_DIR.exists() else 0})
             if u.path.startswith("/file/"):
                 return self.send_file(safe_path(unquote(u.path[6:])), download="dl" in q)
             if u.path.startswith("/thumb/"):
-                return self.send_file(thumb(unquote(u.path[7:])))
+                return self.send_file(thumb(unquote(u.path[7:]), int(q.get("w", ["360"])[0])))
             if u.path == "/zip":
                 return self.send_zip(q.get("path", [""])[0])
             self.send_json({"error": "not found"}, 404)
@@ -879,6 +982,7 @@ if __name__ == "__main__":
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
+    threading.Thread(target=prewarm_thumbs, daemon=True).start()
     try:
         share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")
     except OSError as e:

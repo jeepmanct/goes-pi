@@ -258,6 +258,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <img id="globe-img" alt="GOES-19 view">
     <div id="globe-bar">
       <button class="b" id="globe-play">Play</button>
+      <button class="b ghost" id="globe-vid">Video</button>
       <button class="b ghost" id="globe-gif">GIF</button>
       <input type="range" id="globe-slider" min="0" max="0" value="0">
       <span class="msg" id="globe-time"></span>
@@ -347,7 +348,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 </section>
 
 </main>
-<div id="lightbox"><div class="row"><button class="b" id="lb-save">Save</button><button class="b" id="lb-mail">Email</button><button class="b ghost" id="lb-close">Close</button></div><div id="lb-wrap"><img id="lb-img"></div><div id="lb-form">
+<div id="lightbox"><div class="row"><button class="b" id="lb-save">Save</button><button class="b" id="lb-mail">Email</button><button class="b ghost" id="lb-close">Close</button></div><div id="lb-wrap"><img id="lb-img"></div><video id="lb-vid" controls playsinline loop muted style="display:none;max-width:100vw;max-height:80vh"></video><div id="lb-form">
   <div id="lbm-cap" style="font-weight:600"></div>
   <div class="msg" style="margin:4px 0 8px">Send this picture to:</div>
   <div id="lbm-list"></div>
@@ -572,10 +573,11 @@ $('#sdrtest').onclick = async () => {
 // ---- views (regional crops + time-lapse)
 let globeFrames = [], globeTimer = null, globeLoadId = 0;
 const gUrl = x => '/file/' + x.path.split('/').map(encodeURIComponent).join('/');
+const fUrl = x => '/thumb/' + x.path.split('/').map(encodeURIComponent).join('/') + '?w=720';   // light frame for playback
 function showGlobe(i) {
   const x = globeFrames[i]; if (!x) return;
   $('#globe-slider').value = i;
-  $('#globe-img').src = gUrl(x);
+  $('#globe-img').src = fUrl(x);
   const d = new Date(x.t * 1000);
   $('#globe-time').textContent = d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' +
     d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
@@ -610,7 +612,7 @@ $('#globe-play').onclick = async () => {
   await Promise.all(globeFrames.map(x => new Promise(res => {
     const im = new Image();
     im.onload = im.onerror = () => { $('#globe-msg').textContent = `Loading ${++n} / ${globeFrames.length}…`; res(); };
-    im.src = gUrl(x);
+    im.src = fUrl(x);
   })));
   btn.disabled = false;
   if (id !== globeLoadId) return;
@@ -676,6 +678,18 @@ async function alertTest(kind, btn) {
 $('#alert-test-sig').onclick = e => alertTest('signal', e.target);
 $('#alert-test-wx').onclick = e => alertTest('weather', e.target);
 
+// ---- time-lapse video (mp4, seekable) and GIF
+$('#globe-vid').onclick = async e => {
+  const b = e.target, hrs = +$('#globe-range').value || 72, view = $('#globe-region').value;
+  b.disabled = true; $('#globe-msg').textContent = 'Building the video (about 10 seconds)…';
+  const u = `/mp4/${view}-${hrs}h.mp4`;
+  try {
+    const r = await fetch(u, {headers: {Range: 'bytes=0-0'}});
+    if (!r.ok && r.status !== 206) { $('#globe-msg').textContent = (await r.json().catch(() => ({}))).error || 'Could not build the video.'; }
+    else { lightbox(u); $('#lb-mail').style.display = 'none'; $('#globe-msg').textContent = ''; }
+  } catch { $('#globe-msg').textContent = 'Could not build the video.'; }
+  b.disabled = false;
+};
 // ---- time-lapse GIF
 $('#globe-gif').onclick = async e => {
   const b = e.target, hrs = +$('#globe-range').value || 72, view = $('#globe-region').value;
@@ -746,9 +760,13 @@ async function loadDir(p) {
 let lbUrl = '';
 function lightbox(u) {
   lbUrl = u;
+  const vid = u.endsWith('.mp4');
+  $('#lb-vid').pause(); $('#lb-vid').style.display = vid ? '' : 'none';
+  if (vid) { $('#lb-vid').src = u; $('#lb-vid').play().catch(() => {}); }
   $('#lb-txt').style.display = 'none'; $('#lb-wrap').style.display = ''; $('#lb-hint').style.display = '';
   $('#lb-form').style.display = 'none'; $('#lb-mail').style.display = ''; $('#lb-save').style.display = '';
-  $('#lb-img').classList.remove('zoom'); $('#lb-img').src = u;
+  $('#lb-img').classList.remove('zoom'); $('#lb-img').src = vid ? '' : u;
+  if (vid) { $('#lb-wrap').style.display = 'none'; $('#lb-hint').style.display = 'none'; }
   $('#lightbox').style.display = 'flex';
 }
 async function textViewer(u) {
@@ -802,7 +820,7 @@ $('#lbm-send').onclick = async () => {
   $('#lbm-msg').textContent = r.result; $('#lbm-other').value = ''; $('#lbm-note').value = '';
   setTimeout(lbMailClose, 1400);
 };
-$('#lb-close').onclick = () => $('#lightbox').style.display = 'none';
+$('#lb-close').onclick = () => { $('#lb-vid').pause(); $('#lightbox').style.display = 'none'; };
 
 // ---- mail
 const mailNote = t => { $('#m-msg').textContent = t || ''; };
