@@ -243,8 +243,8 @@ def build(cfg, now_local):
     gif = loop_gif("northeast")
     blocks = forecast_blocks(cfg)
     now_obs = roundup_block(cfg)
-    if not imgs and not blocks and not now_obs:
-        return None
+    if not imgs:
+        return None   # no fresh pictures (dish moved, signal lost...): send nothing rather than a bare or stale email
 
     def cap(t, text):
         return f"{text} - {t.astimezone(LOCAL):%a %-I:%M %p %Z}"
@@ -462,7 +462,7 @@ def main():
             return 0   # a send failed within the last ~50 minutes; don't hammer iCloud
     msg = build(cfg, now_local)
     if msg is None:
-        print("nothing to send (no recent images or forecasts)")
+        print("nothing to send (no fresh images in the last 8 hours)")
         return 0
     if a.out:
         Path(a.out).write_bytes(bytes(msg))
