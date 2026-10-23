@@ -464,6 +464,115 @@ def send(cfg, msg):
         s.send_message(msg)
 
 
+# ---- weekly time-lapse -----------------------------------------------------------
+
+WSTATE = GOES / ".digest-weekly-sent"
+WTRIED = GOES / ".digest-weekly-failed"
+WEEK_MAX_BYTES = 12_000_000   # stays well under iCloud's SMTP size limit
+
+
+def make_week_mp4(view, days=7, max_frames=140):
+    """(mp4 bytes, first UTC time, last UTC time, frame count) for the last `days` days of a rendered view, or None."""
+    import subprocess
+    import tempfile
+    now = dt.datetime.now(dt.timezone.utc)
+    fr = [(t, p) for t, p in frames(view) if now - t <= dt.timedelta(days=days)]
+    if len(fr) < 12:
+        return None
+    pick = fr[:: max(1, -(-len(fr) // max_frames))][-max_frames:]
+    with tempfile.TemporaryDirectory(prefix="goes-week-") as td:
+        lst, out = Path(td) / "frames.txt", Path(td) / "week.mp4"
+        last = pick[-1][1]
+        lst.write_text("".join(f"file '{p}'\nduration 0.12\n" for _t, p in pick) + f"file '{last}'\nduration 1.5\nfile '{last}'\n")
+        for width, crf in ((800, 27), (640, 32)):
+            r = subprocess.run(["nice", "-n", "10", "ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                                "-i", str(lst), "-vf", f"scale={width}:-2:flags=lanczos,format=yuv420p", "-r", "12",
+                                "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-movflags", "+faststart",
+                                str(out)], capture_output=True, text=True, timeout=900)
+            if r.returncode:
+                print("weekly video failed:", r.stderr.strip()[-200:])
+                return None
+            if out.stat().st_size <= WEEK_MAX_BYTES:
+                return out.read_bytes(), pick[0][0], pick[-1][0], len(pick)
+    return None
+
+
+def build_weekly(cfg, now_local, to):
+    view = str(cfg.get("weekly_view", "northeast"))
+    if view not in VIEW_LABELS or view in ("fd", "m1", "m2"):
+        view = "northeast"
+    vid = make_week_mp4(view)
+    if vid is None:
+        return None
+    data, t0, t1, n = vid
+    label = VIEW_LABELS[view]
+    span = f"{t0.astimezone(LOCAL):%a %b %-d} to {t1.astimezone(LOCAL):%a %b %-d}"
+    msg = EmailMessage()
+    msg["Subject"] = f"GOES week in review: {label}, {span}"
+    msg["From"] = f"{cfg['sender_name']} <{cfg['sender']}>"
+    msg["To"] = ", ".join(to)
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="goes.local")
+    link = share_link(cfg, to[0] if len(to) == 1 else None)
+    txt = [f"{label}, {span} ({n} frames, one loop of the week; attached as a video).", "",
+           "Imagery: NOAA GOES-19, received at home."]
+    if link:
+        txt[2:2] = [f"Browse all the maps and the gallery: {link}", ""]
+    msg.set_content("\n".join(txt))
+    h = ['<div style="max-width:620px;margin:0 auto;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1b2430;line-height:1.45">',
+         f'<h3 style="margin:0 0 6px">{html.escape(label)}: the week in review</h3>',
+         f'<p style="margin:0 0 12px">{html.escape(span)}. {n} frames from GOES-19, played as one loop (video attached; tap it to play).</p>']
+    if link:
+        h.append(f'<p style="margin:0 0 12px"><a href="{html.escape(link)}">Browse all the maps and the gallery</a></p>')
+    h.append('<div style="font-size:12px;color:#778">Imagery: NOAA GOES-19, received at home.</div></div>')
+    msg.add_alternative("<html><body>" + "".join(h) + "</body></html>", subtype="html")
+    msg.add_attachment(data, maintype="video", subtype="mp4", filename=f"goes-{view}-week-{t1.astimezone(LOCAL):%Y%m%d}.mp4")
+    return msg
+
+
+def weekly_recipients(cfg):
+    r = cfg.get("weekly_recipients")
+    return [str(x) for x in r] if isinstance(r, list) and r else [cfg["sender"]]
+
+
+def weekly_due(cfg, now_local):
+    """Once on weekly_day (default Sun), starting 30 min after send_time, tried for the rest of the daily window."""
+    if not cfg.get("weekly", True):
+        return False
+    if now_local.strftime("%a").lower() != str(cfg.get("weekly_day", "Sun"))[:3].lower():
+        return False
+    hh, mm = map(int, cfg["send_time"].split(":"))
+    start, minute = hh * 60 + mm + 30, now_local.hour * 60 + now_local.minute
+    if not start <= minute < start + SEND_WINDOW_MIN - 30:
+        return False
+    if WSTATE.exists() and WSTATE.read_text().strip() == f"{now_local:%Y-%m-%d}":
+        return False
+    if not Path(cfg["password_file"]).exists():
+        return False
+    return not (WTRIED.exists() and time.time() - WTRIED.stat().st_mtime < 3000)
+
+
+def run_weekly(cfg, now_local, to, out=None):
+    msg = build_weekly(cfg, now_local, to)
+    if msg is None:
+        print("weekly: not enough frames yet")
+        return 1
+    if out:
+        Path(out).write_bytes(bytes(msg))
+        print(f"saved {out} ({len(bytes(msg)) // 1024} KB)")
+        return 0
+    try:
+        send(cfg, msg)
+    except (OSError, smtplib.SMTPException) as e:
+        print(f"weekly send failed: {e}")
+        WTRIED.touch()
+        return 1
+    print(f"weekly sent to {', '.join(to)} ({len(bytes(msg)) // 1024} KB)")
+    WTRIED.unlink(missing_ok=True)
+    WSTATE.write_text(f"{now_local:%Y-%m-%d}\n")
+    return 0
+
+
 def push(cfg, title, body, priority="default", tags=""):
     """Phone push through ntfy ([alerts] ntfy_topic in mail.conf; off when unset). Best effort, never raises."""
     a = cfg.get("alerts", {})
@@ -508,6 +617,7 @@ def main():
     ap.add_argument("--out", help="save the message to this .eml file instead of sending")
     ap.add_argument("--to", nargs="*", help="override recipients")
     ap.add_argument("--image", help="email just this picture (path relative to data/), to --to")
+    ap.add_argument("--weekly", action="store_true", help="build the week-in-review video email now (to --to, else weekly_recipients; --out saves it)")
     ap.add_argument("--note", default="", help="message to put above the picture (with --image)")
     a = ap.parse_args()
 
@@ -515,6 +625,16 @@ def main():
     if a.to:
         cfg["recipients"] = a.to
     now_local = dt.datetime.now(LOCAL)
+
+    if a.weekly:
+        return run_weekly(cfg, now_local, a.to or weekly_recipients(cfg), a.out)
+
+    if a.if_due and not a.force and not a.out and weekly_due(cfg, now_local):
+        try:
+            run_weekly(cfg, now_local, weekly_recipients(cfg))
+        except Exception as e:   # never let the weekly video block the daily briefing
+            print(f"weekly failed: {e}")
+            WTRIED.touch()
 
     if a.image:
         msg = build_image_message(cfg, a.image, cfg["recipients"], a.note)
