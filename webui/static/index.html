@@ -167,6 +167,31 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   </div>
 </section>
 
+<section id="pi">
+  <div class="grid" id="pi-tiles"></div>
+  <div class="card" style="margin-top:14px"><h2>CPU cores</h2><div id="pi-cores"></div></div>
+  <div class="card"><h2>Memory</h2><div id="pi-mem"></div></div>
+  <div class="card"><h2>Storage</h2><div id="pi-disks"></div><p class="msg" id="pi-data"></p></div>
+  <div class="card"><h2>Network</h2><div id="pi-net"></div></div>
+  <div class="card"><h2>Busiest processes</h2><div id="pi-top"></div></div>
+  <div class="card row">
+    <select id="pi-range" style="width:auto">
+      <option value="1">Last hour</option>
+      <option value="6">Last 6 hours</option>
+      <option value="24" selected>Last 24 hours</option>
+      <option value="72">Last 3 days</option>
+      <option value="168">Last 7 days</option>
+      <option value="336">Last 14 days</option>
+    </select>
+    <span class="msg" id="pi-hist-note" style="margin-left:auto"></span>
+  </div>
+  <div class="card"><h2>CPU usage (%)</h2><canvas id="ph-cpu"></canvas></div>
+  <div class="card"><h2>Memory used (%)</h2><canvas id="ph-mem"></canvas></div>
+  <div class="card"><h2>Temperature (&deg;C)</h2><canvas id="ph-temp"></canvas></div>
+  <div class="card"><h2>Network (KB/s, both directions)</h2><canvas id="ph-net"></canvas></div>
+  <div class="card"><h2>Hardware</h2><table id="pi-specs" style="width:100%;border-collapse:collapse;font-size:14px"></table></div>
+</section>
+
 <section id="control">
   <div class="card">
     <h2>goesrecv – demodulator</h2>
@@ -368,7 +393,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['signal','Signal'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['mail','Mail'],['logs','Logs']];
+const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['mail','Mail'],['logs','Logs']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -386,6 +411,7 @@ function show(id) {
   if (id === 'mail') { loadMail(); loadShare(); }
   if (id === 'forecast') loadForecast();
   if (id === 'signal') loadSignal();
+  if (id === 'pi') loadPi();
 }
 let startTab = 'aim';
 try { startTab = localStorage.tab || 'aim'; } catch {}
@@ -677,6 +703,84 @@ async function alertTest(kind, btn) {
 }
 $('#alert-test-sig').onclick = e => alertTest('signal', e.target);
 $('#alert-test-wx').onclick = e => alertTest('weather', e.target);
+
+// ---- Pi stats
+const piBar = (pct, color) => { const o = document.createElement('div'); o.style.cssText = 'height:12px;border-radius:6px;background:var(--line);overflow:hidden;flex:1';
+  const i = document.createElement('div'); i.style.cssText = `height:100%;width:${Math.min(100, Math.max(0, pct)).toFixed(0)}%;background:${color}`; o.append(i); return o; };
+const piColor = (v, warn, bad) => v >= bad ? 'var(--bad)' : v >= warn ? 'var(--warn)' : 'var(--accent)';
+function piRow(label, pct, text, color, labelW) {
+  const r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:10px;margin:6px 0;font-size:14px';
+  const l = document.createElement('span'); l.style.cssText = `min-width:${labelW || 72}px;color:var(--muted)`; l.textContent = label;
+  const t = document.createElement('span'); t.style.cssText = 'min-width:120px;text-align:right;font-variant-numeric:tabular-nums'; t.textContent = text;
+  r.append(l, piBar(pct, color), t); return r;
+}
+function piTile(label, value, sub, color) {
+  const d = document.createElement('div'); d.className = 'metric';
+  d.innerHTML = '<div class="l"></div><div class="v"></div><div class="s"></div>';
+  d.children[0].textContent = label; d.children[1].textContent = value; d.children[2].textContent = sub || '';
+  if (color) d.children[1].style.color = color;
+  return d;
+}
+const fmtRate = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB/s' : (b / 1e3).toFixed(1) + ' KB/s';
+const fmtUp = s => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + h + 'h ' + m + 'm'; };
+function piRender(live) {
+  if (!live || !live.t) { $('#pi-tiles').textContent = 'Collecting the first sample… try again in a few seconds.'; return; }
+  const m = live.mem, memPct = 100 * m.used / m.total, th = live.throttle;
+  const bad = th && th.now.length;
+  const tiles = $('#pi-tiles'); tiles.replaceChildren(
+    piTile('CPU', live.cpu.toFixed(0) + '%', live.freq_mhz ? Math.round(live.freq_mhz) + ' MHz' : '', piColor(live.cpu, 70, 90).replace('var(--accent)', '')),
+    piTile('Memory', memPct.toFixed(0) + '%', fmtBytes(m.used) + ' of ' + fmtBytes(m.total), piColor(memPct, 75, 90).replace('var(--accent)', '')),
+    piTile('Temperature', live.temp == null ? '–' : live.temp.toFixed(0) + ' °C', live.temp == null ? '' : (live.temp * 9 / 5 + 32).toFixed(0) + ' °F', live.temp == null ? '' : piColor(live.temp, 65, 78).replace('var(--accent)', '')),
+    piTile('Load', live.load[0].toFixed(2), `5m ${live.load[1].toFixed(2)} · 15m ${live.load[2].toFixed(2)}`),
+    piTile('Uptime', fmtUp(live.uptime), live.procs + ' processes'),
+    piTile('Power / throttle', th ? (bad ? 'Problem' : 'OK') : '–', th ? (bad ? th.now.join(', ') : th.past.length ? 'Earlier: ' + th.past.join(', ') : 'No issues since boot') : 'not available', bad ? 'var(--bad)' : th && !th.past.length ? 'var(--good)' : ''));
+  $('#pi-cores').replaceChildren(...live.cores.map((c, i) => piRow('Core ' + i, c, c.toFixed(0) + '%', piColor(c, 70, 90))));
+  const cache = Math.min(m.cached, m.total - m.used);
+  $('#pi-mem').replaceChildren(
+    piRow('RAM used', memPct, `${fmtBytes(m.used)} / ${fmtBytes(m.total)}`, piColor(memPct, 75, 90)),
+    piRow('File cache', 100 * cache / m.total, fmtBytes(cache), 'var(--muted)'),
+    piRow('Swap', m.swap_total ? 100 * m.swap_used / m.swap_total : 0, m.swap_total ? `${fmtBytes(m.swap_used)} / ${fmtBytes(m.swap_total)}` : 'none', piColor(m.swap_total ? 100 * m.swap_used / m.swap_total : 0, 25, 60)));
+  $('#pi-disks').replaceChildren(...live.disks.map(d => piRow(d.mount, 100 * d.used / d.total,
+    `${fmtBytes(d.used)} / ${fmtBytes(d.total)}`, piColor(100 * d.used / d.total, 75, 90), 110)));
+  $('#pi-net').replaceChildren(...Object.entries(live.net).filter(([n, v]) => live.ips[n] || v.rx_total || v.tx_total).map(([n, v]) => {
+    const r = document.createElement('div'); r.style.cssText = 'margin:6px 0;font-size:14px';
+    r.textContent = `${n}${live.ips[n] ? ' (' + live.ips[n] + ')' : ''}: ↓ ${fmtRate(v.rx)}  ↑ ${fmtRate(v.tx)}  · total ↓ ${fmtBytes(v.rx_total)} ↑ ${fmtBytes(v.tx_total)}`;
+    return r; }));
+  const tb = document.createElement('table'); tb.style.cssText = 'width:100%;border-collapse:collapse;font-size:14px';
+  tb.innerHTML = '<tr style="color:var(--muted);text-align:left"><th>Process</th><th>PID</th><th style="text-align:right">CPU</th><th style="text-align:right">Memory</th></tr>';
+  tb.querySelectorAll('th').forEach(h => h.style.padding = '2px 0 2px 10px');
+  for (const p of live.top) { const tr = tb.insertRow(); [p.name, p.pid, p.cpu.toFixed(1) + '%', fmtBytes(p.rss)].forEach((v, i) => { const c = tr.insertCell(); c.textContent = v; c.style.padding = '2px 0 2px 10px'; if (i > 1) c.style.textAlign = 'right'; }); }
+  $('#pi-top').replaceChildren(tb);
+}
+function piSpecs(sp) {
+  const rows = [['Model', sp.model], ['SoC', sp.soc], ['Board revision', sp.revision], ['CPU', `${sp.cpu} × ${sp.cores} (${sp.arch})`],
+    ['CPU speed', sp.cpu_min_mhz ? `${sp.cpu_min_mhz} – ${sp.cpu_max_mhz} MHz` : ''], ['RAM', fmtBytes(sp.ram)], ['Swap', sp.swap ? fmtBytes(sp.swap) : 'none'],
+    ['OS', sp.os], ['Kernel', sp.kernel], ['Firmware', sp.firmware], ['Boot disk', sp.root_device], ['Hostname', sp.hostname], ['Python', sp.python]];
+  $('#pi-specs').replaceChildren(...rows.filter(r => r[1]).map(([k, v]) => { const tr = document.createElement('tr');
+    const a = document.createElement('td'), b = document.createElement('td'); a.textContent = k; b.textContent = v;
+    a.style.cssText = 'color:var(--muted);padding:4px 12px 4px 0;white-space:nowrap'; tr.append(a, b); return tr; }));
+}
+let piSpecsDone = false, piStorageAt = 0;
+async function piLive() {
+  try { const d = await api('/api/pi'); piRender(d.live); if (!piSpecsDone && d.specs) { piSpecs(d.specs); piSpecsDone = true; } } catch {}
+}
+async function piHistory() {
+  try {
+    const d = await api('/api/pi/history?hours=' + $('#pi-range').value);
+    hchart('#ph-cpu', d.points, 'cpu', '--accent', 0); hchart('#ph-mem', d.points, 'mem', '--good', 0); hchart('#ph-temp', d.points, 'temp', '--warn');
+    hchart('#ph-net', d.points.map(p => ({t: p.t, kb: p.rx == null ? null : (p.rx + p.tx) / 1000})), 'kb', '--accent', 0);
+    $('#pi-hist-note').textContent = d.points.length ? '' : 'History starts after the first full minute';
+  } catch {}
+}
+async function piData() {
+  if (Date.now() - piStorageAt < 600000) return;
+  piStorageAt = Date.now(); $('#pi-data').textContent = 'Satellite data: measuring…';
+  try { const d = await api('/api/storage'); $('#pi-data').textContent = 'Satellite data (~/goes/data): ' + fmtBytes(d.bytes); } catch { $('#pi-data').textContent = ''; }
+}
+function loadPi() { piLive(); piHistory(); piData(); }
+$('#pi-range').onchange = piHistory;
+setInterval(() => { if ($('#pi').classList.contains('active') && !document.hidden) piLive(); }, 3000);
+setInterval(() => { if ($('#pi').classList.contains('active') && !document.hidden) piHistory(); }, 60000);
 
 // ---- time-lapse video (mp4, seekable) and GIF
 $('#globe-vid').onclick = async e => {

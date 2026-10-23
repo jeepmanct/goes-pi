@@ -45,6 +45,7 @@ def _load(name):
 
 watch = _load("watch")
 share = _load("share")
+sysstats = _load("sysstats")
 HOME = Path.home()
 GOES_DIR = HOME / "goes"
 DATA_DIR = GOES_DIR / "data"
@@ -849,6 +850,11 @@ class Handler(BaseHTTPRequestHandler):
             mm = re.fullmatch(r"/mp4/([a-z_]+)-(\d+)h\.mp4", u.path)
             if mm:
                 return self.send_file(make_mp4(mm.group(1), float(mm.group(2))))
+            if u.path == "/api/pi":
+                return self.send_json({"specs": sysstats.specs(), "live": sysstats.live()})
+            if u.path == "/api/pi/history":
+                hrs = min(max(float(q.get("hours", ["24"])[0]), 1), 24 * 14)
+                return self.send_json({"points": sysstats.history(hrs), "hours": hrs})
             if u.path == "/api/storage":
                 return self.send_json({"bytes": dir_size(DATA_DIR) if DATA_DIR.exists() else 0})
             if u.path.startswith("/file/"):
@@ -982,6 +988,7 @@ if __name__ == "__main__":
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
+    sysstats.start()
     threading.Thread(target=prewarm_thumbs, daemon=True).start()
     try:
         share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")
