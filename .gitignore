@@ -12,3 +12,7 @@ signal-history.jsonl
 .alerts-seen
 webui/*.bak*
 share-token.txt
+share-tokens.json
+share-visits.json
+.digest-skipnote
+mail.conf.bak*

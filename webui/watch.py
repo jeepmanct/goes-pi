@@ -78,6 +78,12 @@ def notify(subject, body, key=None, every=6 * 3600):
         msg.set_content(body)
         _digest().send(cfg, msg)
         _state["last_alert"] = {"t": time.time(), "subject": subject}
+        try:   # phone push too, when [alerts] ntfy_topic is set
+            _digest().push(cfg, subject, body[:900],
+                           "urgent" if subject.startswith("NWS:") and "Warning" in subject else "high",
+                           "rotating_light" if subject.startswith("NWS:") else "warning")
+        except Exception as e:
+            print("push error:", e, flush=True)
         print("alert sent:", subject, flush=True)
         return True
     except Exception as e:  # never let mail trouble kill the monitor

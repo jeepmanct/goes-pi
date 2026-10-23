@@ -288,6 +288,10 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="row" style="margin-top:14px"><a class="b ghost" id="zip" href="#" target="_blank" rel="noopener">Download this folder (zip)</a><span class="msg" id="zip-note" style="display:none">Folder zip download is only available in the Safari browser, not the Home Screen app.</span></div>
 </section>
 
+<section id="forecast">
+  <div class="card"><p class="msg" id="fc-msg">Loading…</p><div id="fc-out"></div></div>
+</section>
+
 <section id="mail">
   <div class="card">
     <h2>Morning briefing email</h2>
@@ -308,6 +312,29 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     </div>
     <p class="msg" id="m-msg"></p>
     <p class="msg">Each email includes a note that replying "unsubscribe" stops it; those replies come to the sender's inbox, so remove the address here when someone asks.</p>
+  </div>
+  <div class="card">
+    <h2>Public share links</h2>
+    <p class="msg" id="sh-info"></p>
+    <div id="sh-list"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="sh-name" placeholder="Name (e.g. Mom)" maxlength="60" style="flex:1;min-width:9em">
+      <input type="email" id="sh-email" placeholder="Their email (optional)" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+      <button class="b" id="sh-add">Add link</button>
+    </div>
+    <p class="msg" id="sh-msg"></p>
+    <p class="msg">Anyone with a link can view the pictures, nothing else. Give each person their own link so you can see who opens it and cancel just theirs. If an email address matches a recipient above, that person's daily email carries their own link. "New link" cancels the old one.</p>
+  </div>
+  <div class="card">
+    <h2>Phone push notifications</h2>
+    <p class="msg">Alerts (signal lost, restarts, weather warnings, skipped briefing) can also be pushed to your phone with the free ntfy app. Install ntfy, subscribe to a topic name that is hard to guess, and enter the same name here. Anyone who knows the topic could read the alerts, so make it long and random. Alert text passes through ntfy.sh.</p>
+    <div class="row">
+      <input type="text" id="pt-topic" placeholder="e.g. goes-k3x9q7m2vz" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+      <button class="b" id="pt-save">Save</button>
+      <button class="b ghost" id="pt-gen">Make one</button>
+      <button class="b ghost" id="pt-test">Send test push</button>
+    </div>
+    <p class="msg" id="pt-msg"></p>
   </div>
 </section>
 
@@ -340,7 +367,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['signal','Signal'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['mail','Mail'],['logs','Logs']];
+const TABS = [['aim','Aim'],['signal','Signal'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['mail','Mail'],['logs','Logs']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -355,7 +382,8 @@ function show(id) {
   if (id === 'images') loadDir(curPath);
   if (id === 'gallery') loadGallery(true);
   if (id === 'globe') loadGlobe();
-  if (id === 'mail') loadMail();
+  if (id === 'mail') { loadMail(); loadShare(); }
+  if (id === 'forecast') loadForecast();
   if (id === 'signal') loadSignal();
 }
 let startTab = 'aim';
@@ -818,6 +846,79 @@ $('#m-time-save').onclick = async () => {
   if (r.error) return mailNote(r.error);
   renderMail(r); mailNote('Send time saved.');
 };
+
+// ---- share links, push, forecast
+const shNote = t => { $('#sh-msg').textContent = t || ''; };
+let shData = null;
+function renderShare(d) {
+  shData = d;
+  $('#sh-info').textContent = d.public_url ? 'Public address: ' + d.public_url : 'No public_url in mail.conf yet - links will not work from outside.';
+  $('#pt-topic').value = d.topic || '';
+  $('#sh-list').innerHTML = '';
+  d.links.forEach(l => {
+    const url = d.public_url + l.path;
+    const row = document.createElement('div'); row.className = 'mrow';
+    const a = document.createElement('span'); a.className = 'addr';
+    const b = document.createElement('b'); b.textContent = l.name;
+    const sub = document.createElement('div'); sub.className = 'msg';
+    sub.textContent = (l.email ? l.email + ' · ' : '') + l.total + ' opens, ' + l.week + ' in 7 days' +
+      (l.last ? ', last ' + new Date(l.last * 1000).toLocaleString() : ', never opened');
+    a.append(b, sub);
+    const cp = document.createElement('button'); cp.className = 'b ghost'; cp.textContent = 'Copy link';
+    cp.onclick = async () => {
+      try { await navigator.clipboard.writeText(url); shNote('Copied the link for ' + l.name + '.'); }
+      catch { prompt('Copy this link:', url); }
+    };
+    const rn = document.createElement('button'); rn.className = 'b ghost'; rn.textContent = 'New link';
+    rn.onclick = async () => {
+      if (!confirm('Cancel the old link for ' + l.name + ' and make a new one?')) return;
+      const r = await api('/api/share/rotate', {id: l.id});
+      if (r.error) shNote(r.error); else { renderShare(r); shNote('New link made for ' + l.name + '. The old one no longer works.'); }
+    };
+    const x = document.createElement('button'); x.className = 'b stop'; x.textContent = 'Remove';
+    x.disabled = d.links.length < 2;
+    x.onclick = async () => {
+      if (!confirm('Remove the link for ' + l.name + '? It will stop working.')) return;
+      const r = await api('/api/share/revoke', {id: l.id});
+      if (r.error) shNote(r.error); else { renderShare(r); shNote('Removed.'); }
+    };
+    row.append(a, cp, rn, x); $('#sh-list').append(row);
+  });
+}
+async function loadShare() { shNote(''); try { renderShare(await api('/api/share')); } catch (e) { shNote('Could not load share links.'); } }
+$('#sh-add').onclick = async () => {
+  const r = await api('/api/share/add', {name: $('#sh-name').value, email: $('#sh-email').value});
+  if (r.error) return shNote(r.error);
+  $('#sh-name').value = ''; $('#sh-email').value = ''; renderShare(r); shNote('Link added. Use "Copy link" to send it.');
+};
+const ptNote = t => { $('#pt-msg').textContent = t || ''; };
+$('#pt-gen').onclick = () => {
+  const a = new Uint8Array(8); crypto.getRandomValues(a);
+  $('#pt-topic').value = 'goes-' + [...a].map(n => (n % 36).toString(36)).join('');
+};
+$('#pt-save').onclick = async () => {
+  const r = await api('/api/push/topic', {topic: $('#pt-topic').value});
+  if (r.error) return ptNote(r.error);
+  renderShare(r); ptNote(r.topic ? 'Saved. Subscribe to "' + r.topic + '" in the ntfy app, then send a test.' : 'Push turned off.');
+};
+$('#pt-test').onclick = e => alertTest('push', e.target).then(() => { ptNote($('#alert-msg').textContent); });
+async function loadForecast() {
+  $('#fc-msg').textContent = 'Loading…';
+  const r = await api('/api/forecast');
+  const out = $('#fc-out'); out.innerHTML = '';
+  $('#fc-msg').textContent = r.offices.length
+    ? 'National Weather Service forecast discussions as received over the satellite. The offices come from afd_offices in mail.conf.'
+    : 'No forecast discussions have arrived in the last 48 hours.';
+  r.offices.forEach(o => {
+    const h = document.createElement('h2'); h.textContent = o.office; out.append(h);
+    const i = document.createElement('div'); i.className = 'msg';
+    i.textContent = o.issued + (o.age_h > 12 ? '  ·  ' + Math.round(o.age_h) + ' h old' : ''); out.append(i);
+    o.sections.forEach(s => {
+      const t = document.createElement('div'); t.style.cssText = 'font-weight:600;margin-top:12px'; t.textContent = s.head; out.append(t);
+      s.paras.forEach(p => { const e = document.createElement('p'); e.style.margin = '4px 0'; e.textContent = p; out.append(e); });
+    });
+  });
+}
 
 // ---- logs
 async function pollLog() {

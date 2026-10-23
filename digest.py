@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import html
 import io
+import json
 import re
 import smtplib
 import ssl
@@ -152,6 +153,39 @@ def parse_afd(text, budget=1500):
     return office, issued, picked
 
 
+def parse_afd_full(text):
+    """Whole forecast discussion -> (office line, issued line, [(heading, [paragraphs])]) in original order."""
+    lines = text.split("\n")
+    office = next((l.strip() for l in lines if l.startswith("National Weather Service")), "")
+    issued = next((l.strip() for l in lines if re.match(r"^\d{3,4} [AP]M ", l.strip())), "")
+    secs, cur = [], None
+    for ln in lines:
+        m = SECTION_RE.match(ln.strip())
+        if m:
+            cur = [m.group(1).strip().title(), [m.group(2)] if m.group(2).strip() else []]
+            secs.append(cur)
+        elif ln.strip() == "&&":
+            cur = None
+        elif cur is not None:
+            cur[1].append(ln)
+    return office, issued, [(h, paragraphs(b)) for h, b in secs if paragraphs(b)]
+
+
+def forecast_full(cfg):
+    """[{office, site, issued, age_h, sections:[{head, paras}]}] for every configured office whose AFD has arrived."""
+    out = []
+    for site in cfg.get("afd_offices", []):
+        got = latest_bulletin("AFD", site, max_age_h=48)
+        if not got:
+            continue
+        office, issued, secs = parse_afd_full(got[0])
+        if secs:
+            age = (dt.datetime.now(dt.timezone.utc) - got[1]).total_seconds() / 3600
+            out.append({"site": site, "office": office or f"NWS {site}", "issued": issued, "age_h": round(age, 1),
+                        "t": got[1].timestamp(), "sections": [{"head": h, "paras": ps} for h, ps in secs]})
+    return out
+
+
 SKY = {"SUNNY": "Sunny", "MOSUNNY": "Mostly sunny", "PTSUNNY": "Partly sunny", "CLEAR": "Clear",
        "FAIR": "Fair", "MOCLDY": "Mostly cloudy", "PTCLDY": "Partly cloudy", "CLOUDY": "Cloudy",
        "LGT RAIN": "Light rain", "RAIN": "Rain", "HVY RAIN": "Heavy rain", "FOG": "Fog", "HAZE": "Haze",
@@ -221,11 +255,11 @@ def forecast_blocks(cfg):
 
 # ---- message ------------------------------------------------------------------
 
-def build(cfg, now_local):
+def build(cfg, now_local, to=None):
     msg = EmailMessage()
     msg["Subject"] = f"GOES Northeast briefing, {now_local:%a %b %-d}"
     msg["From"] = f"{cfg['sender_name']} <{cfg['sender']}>"
-    msg["To"] = ", ".join(cfg["recipients"])
+    msg["To"] = ", ".join(to or cfg["recipients"])
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain="goes.local")
 
@@ -249,7 +283,7 @@ def build(cfg, now_local):
     def cap(t, text):
         return f"{text} - {t.astimezone(LOCAL):%a %-I:%M %p %Z}"
 
-    link = share_link(cfg)
+    link = share_link(cfg, to[0] if to and len(to) == 1 else None)
 
     # plain text
     txt = [f"GOES Northeast briefing - {now_local:%A, %B %-d}", ""]
@@ -316,14 +350,22 @@ def build(cfg, now_local):
     return msg
 
 
-def share_link(cfg):
-    """Public read-only page URL (mail.conf public_url + the secret token), or None if not set up."""
+def share_link(cfg, email=None):
+    """Public read-only page URL for this recipient (mail.conf public_url + their token), or None.
+    Tokens live in share-tokens.json (managed from the panel); an entry whose email matches gets its own link,
+    otherwise the first entry without an email is used."""
     base = str(cfg.get("public_url", "")).rstrip("/")
-    try:
-        tok = (GOES / "share-token.txt").read_text().strip()
-    except OSError:
+    if not base.startswith("https://"):
         return None
-    return f"{base}/s/{tok}/" if base.startswith("https://") and tok else None
+    try:
+        links = json.loads((GOES / "share-tokens.json").read_text()).get("links", [])
+    except (OSError, ValueError):
+        return None
+    pick = None
+    if email:
+        pick = next((l for l in links if l.get("email", "").lower() == email.lower()), None)
+    pick = pick or next((l for l in links if not l.get("email")), None)
+    return f"{base}/s/{pick['token']}/" if pick and pick.get("token") else None
 
 
 # ---- one picture by email (from the app's image viewer) ------------------------
@@ -422,6 +464,43 @@ def send(cfg, msg):
         s.send_message(msg)
 
 
+def push(cfg, title, body, priority="default", tags=""):
+    """Phone push through ntfy ([alerts] ntfy_topic in mail.conf; off when unset). Best effort, never raises."""
+    a = cfg.get("alerts", {})
+    topic = str(a.get("ntfy_topic", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", topic):
+        return False
+    import urllib.request
+    server = str(a.get("ntfy_server", "https://ntfy.sh")).rstrip("/")
+    if not server.startswith("https://"):
+        return False
+    hdr = {"Title": title.encode("ascii", "replace").decode()[:120], "Priority": priority}
+    if tags:
+        hdr["Tags"] = tags
+    try:
+        req = urllib.request.Request(f"{server}/{topic}", data=body.encode()[:3500], headers=hdr, method="POST")
+        urllib.request.urlopen(req, timeout=15).read()
+        return True
+    except Exception as e:
+        print("push failed:", e)
+        return False
+
+
+SKIPNOTE = GOES / ".digest-skipnote"
+
+
+def sent_state(today):
+    """-> (complete, emails already sent today)."""
+    if not STATE.exists():
+        return False, set()
+    lines = STATE.read_text().split()
+    if not lines or lines[0] != today:
+        return False, set()
+    if "partial" in lines:
+        return False, set(l.lower() for l in lines[2:])
+    return True, set()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--if-due", action="store_true")
@@ -452,7 +531,7 @@ def main():
         start = hh * 60 + mm
         if not (start <= now_local.hour * 60 + now_local.minute < start + SEND_WINDOW_MIN):
             return 0
-        if STATE.exists() and STATE.read_text().strip() == f"{now_local:%Y-%m-%d}":
+        if sent_state(f"{now_local:%Y-%m-%d}")[0]:
             return 0
 
     if a.if_due and not a.force and not a.out:
@@ -460,25 +539,62 @@ def main():
             return 0   # not set up yet
         if TRIED.exists() and time.time() - TRIED.stat().st_mtime < 3000:
             return 0   # a send failed within the last ~50 minutes; don't hammer iCloud
-    msg = build(cfg, now_local)
-    if msg is None:
+    today = f"{now_local:%Y-%m-%d}"
+    done = sent_state(today)[1] if a.if_due and not a.force and not a.out else set()
+    todo = [r for r in cfg["recipients"] if r.lower() not in done]
+    own = [r for r in todo if share_link(cfg, r) and share_link(cfg, r) != share_link(cfg, None)]
+    groups = [[r] for r in own] + ([[r for r in todo if r not in own]] if [r for r in todo if r not in own] else [])
+    first = None
+    failed = False
+    for g in groups:
+        msg = build(cfg, now_local, to=g)
+        if msg is None:
+            break
+        if a.out:
+            Path(a.out).write_bytes(bytes(msg))
+            print(f"saved {a.out} ({len(bytes(msg)) // 1024} KB)")
+            return 0
+        try:
+            send(cfg, msg)
+        except (OSError, smtplib.SMTPException) as e:
+            failed = True
+            print(f"send failed for {', '.join(g)}: {e}")
+            continue
+        done |= {r.lower() for r in g}
+        print(f"sent to {', '.join(g)} ({len(bytes(msg)) // 1024} KB)")
+        first = first or msg
+    if first is None and not failed:
         print("nothing to send (no fresh images in the last 8 hours)")
+        if a.if_due and not a.force:
+            hh, mm = map(int, cfg["send_time"].split(":"))
+            late = now_local.hour * 60 + now_local.minute >= hh * 60 + mm + SEND_WINDOW_MIN - 15
+            if late and not (SKIPNOTE.exists() and SKIPNOTE.read_text().strip() == today):
+                note = EmailMessage()
+                note["Subject"] = "GOES: today's briefing was not sent"
+                note["From"] = f"{cfg['sender_name']} <{cfg['sender']}>"
+                to = cfg.get("alert_recipients") or cfg["recipients"]
+                note["To"] = ", ".join(to)
+                note["Date"] = formatdate(localtime=True)
+                note["Message-ID"] = make_msgid(domain="goes.local")
+                text = ("No fresh satellite pictures were available this morning, so the daily briefing was skipped "
+                        "instead of sending an empty or old one. Check that the dish is still aimed and goesrecv shows a lock.")
+                note.set_content(text)
+                try:
+                    send(cfg, note)
+                    push(cfg, "GOES briefing skipped", text, "high", "warning")
+                    SKIPNOTE.write_text(today + "\n")
+                except (OSError, smtplib.SMTPException) as e:
+                    print(f"skip notice failed: {e}")
         return 0
-    if a.out:
-        Path(a.out).write_bytes(bytes(msg))
-        print(f"saved {a.out} ({len(bytes(msg)) // 1024} KB)")
-        return 0
-    try:
-        send(cfg, msg)
-    except (OSError, smtplib.SMTPException) as e:
+    if failed:
         if a.if_due:
             TRIED.touch()
-        print(f"send failed: {e}")
+            if done:
+                STATE.write_text(f"{today}\npartial\n" + "\n".join(sorted(done)) + "\n")
         return 1
     TRIED.unlink(missing_ok=True)
     if a.if_due:
-        STATE.write_text(f"{now_local:%Y-%m-%d}\n")
-    print(f"sent to {', '.join(cfg['recipients'])} ({len(bytes(msg)) // 1024} KB)")
+        STATE.write_text(f"{today}\ncomplete\n")
     return 0
 
 

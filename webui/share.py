@@ -2,6 +2,7 @@
 
 Started from app.py with start(frames_fn, gif_fn). Listens on 127.0.0.1 only; expose it with
 `tailscale funnel`. The token lives in ~/goes/share-token.txt (delete the file and restart to rotate).
+Each link has its own token (managed from the panel); visits are counted per link.
 Only the whitelisted views below are served, only as JPEG/GIF, and nothing here can write or control anything.
 """
 import datetime as dt
@@ -15,7 +16,9 @@ from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-TOKEN_FILE = Path.home() / "goes" / "share-token.txt"
+TOKEN_FILE = Path.home() / "goes" / "share-token.txt"          # legacy single token (migrated)
+LINKS_FILE = Path.home() / "goes" / "share-tokens.json"        # {"links": [{id, name, email, token, created}]}
+VISITS_FILE = Path.home() / "goes" / "share-visits.json"       # {id: {total, last, days: {YYYY-MM-DD: n}}}
 PORT = 8090
 VIEWS = {  # name -> label
     "nyc": "New York City", "northeast": "Northeast US", "fog_northeast": "Northeast fog (night)",
@@ -25,20 +28,146 @@ VIEWS = {  # name -> label
 HOURS = 24          # Views player + GIF window
 GALLERY_HOURS = 72  # how far back the Gallery goes
 THUMBS = Path.home() / "goes" / "webui" / "thumbs" / "share"
-_frames_fn = _gif_fn = None
+_frames_fn = _gif_fn = _forecast_fn = _icon = None
 _cache = {}
 _lock = threading.Lock()
 
 
-def token():
-    if TOKEN_FILE.exists():
-        t = TOKEN_FILE.read_text().strip()
-        if len(t) >= 20:
-            return t
-    t = secrets.token_urlsafe(24)
-    TOKEN_FILE.write_text(t + "\n")
-    TOKEN_FILE.chmod(0o600)
-    return t
+_links_cache = {"mtime": None, "links": []}
+_visits = {}
+_visits_dirty = [0.0]
+
+
+def _read_links():
+    try:
+        return json.loads(LINKS_FILE.read_text()).get("links", [])
+    except (OSError, ValueError):
+        return None
+
+
+def _write_links(links):
+    tmp = LINKS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"links": links}, indent=1) + "\n")
+    tmp.chmod(0o600)
+    tmp.replace(LINKS_FILE)
+
+
+def links():
+    """All links, re-read when the file changes. Creates the first one (migrating the old single token)."""
+    with _lock:
+        links = _read_links()
+        if links is None:
+            tok = TOKEN_FILE.read_text().strip() if TOKEN_FILE.exists() else ""
+            if len(tok) < 20:
+                tok = secrets.token_urlsafe(24)
+            links = [{"id": secrets.token_hex(4), "name": "Everyone", "email": "", "token": tok,
+                      "created": int(time.time())}]
+            _write_links(links)
+        return links
+
+
+def link_for(tok):
+    found = None
+    for l in links():                       # compare against every token so timing doesn't reveal a match
+        if hmac.compare_digest(l["token"], tok):
+            found = l
+    return found
+
+
+def _new_id(ls):
+    while True:
+        i = secrets.token_hex(4)
+        if all(l["id"] != i for l in ls):
+            return i
+
+
+def add_link(name, email=""):
+    name, email = str(name).strip()[:60], str(email).strip()[:120]
+    if not name:
+        raise ValueError("give the link a name")
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("that email address doesn't look valid")
+    with _lock:
+        ls = links_unlocked()
+        if len(ls) >= 25:
+            raise ValueError("at most 25 links")
+        if email and any(l["email"].lower() == email.lower() for l in ls):
+            raise ValueError("that email already has a link")
+        ls.append({"id": _new_id(ls), "name": name, "email": email, "token": secrets.token_urlsafe(24),
+                   "created": int(time.time())})
+        _write_links(ls)
+    return ls[-1]
+
+
+def links_unlocked():
+    return _read_links() or []
+
+
+def rotate_link(lid):
+    with _lock:
+        ls = links_unlocked()
+        for l in ls:
+            if l["id"] == lid:
+                l["token"] = secrets.token_urlsafe(24)
+                _write_links(ls)
+                return l
+    raise ValueError("no such link")
+
+
+def revoke_link(lid):
+    with _lock:
+        ls = links_unlocked()
+        if len(ls) <= 1 and ls and ls[0]["id"] == lid:
+            raise ValueError("keep at least one link (rotate it instead)")
+        n = [l for l in ls if l["id"] != lid]
+        if len(n) == len(ls):
+            raise ValueError("no such link")
+        _write_links(n)
+        _visits.pop(lid, None)
+        _flush_visits(force=True)
+
+
+def _load_visits():
+    try:
+        _visits.update(json.loads(VISITS_FILE.read_text()))
+    except (OSError, ValueError):
+        pass
+
+
+def _flush_visits(force=False):
+    if not force and time.time() - _visits_dirty[0] < 30:
+        return
+    try:
+        tmp = VISITS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_visits))
+        tmp.replace(VISITS_FILE)
+        _visits_dirty[0] = time.time()
+    except OSError:
+        pass
+
+
+def count_visit(lid):
+    day = dt.date.today().isoformat()
+    with _lock:
+        v = _visits.setdefault(lid, {"total": 0, "last": 0, "days": {}})
+        v["total"] += 1
+        v["last"] = int(time.time())
+        v["days"][day] = v["days"].get(day, 0) + 1
+        for d in sorted(v["days"])[:-60]:
+            del v["days"][d]
+        _flush_visits()
+
+
+def summary(base_url=""):
+    """For the panel: every link with its URL and visit numbers."""
+    wk = (dt.date.today() - dt.timedelta(days=6)).isoformat()
+    out = []
+    for l in links():
+        v = _visits.get(l["id"], {})
+        out.append({"id": l["id"], "name": l["name"], "email": l["email"], "created": l["created"],
+                    "path": f"/s/{l['token']}/", "total": v.get("total", 0), "last": v.get("last", 0),
+                    "week": sum(n for d, n in v.get("days", {}).items() if d >= wk)})
+    return out
 
 
 def frames(view):
@@ -132,7 +261,9 @@ the trip up, down and around.</li>
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
-<title>GOES-19 Satellite</title><style>
+<link rel="manifest" href="%BASE%manifest.webmanifest"><link rel="apple-touch-icon" href="%BASE%icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="GOES">
+<meta name="theme-color" content="#0e1828"><title>GOES-19 Satellite</title><style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#14202e;--mut:#667;--card:#f1f4f8;--acc:#1f6feb}
 @media(prefers-color-scheme:dark){:root{--bg:#0e1828;--fg:#e6edf5;--mut:#98a6b8;--card:#17253a;--acc:#58a6ff}}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif}
@@ -152,15 +283,20 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #how h2{font-size:18px;margin:18px 0 4px}#how h2:first-child{margin-top:4px}#how p,#how li{color:var(--fg);font-size:15px;margin:6px 0}
 #how ol{padding-left:22px}#how .flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;margin:8px 0}
 #how .flow span{background:var(--bg);border:1px solid #8884;border-radius:8px;padding:5px 9px}#how .flow i{color:var(--mut);font-style:normal}
+#stale{padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:14px;background:#d9770622;border:1px solid #d97706}
+#fc h2{font-size:18px;margin:14px 0 2px}#fc h3{font-size:14px;margin:12px 0 2px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+#fc p{color:var(--fg);font-size:15px;margin:5px 0}#fc .iss{color:var(--mut);font-size:13px}
 </style></head><body><main><h1>GOES-19 East satellite</h1>
-<p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.</p>
-<div id="tabs"><button id="tv" class="on">Views</button><button id="tg">Gallery</button><button id="th">How it works</button></div>
+<p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.<span id="lu"></span></p>
+<div id="stale" style="display:none"></div>
+<div id="tabs"><button id="tv" class="on">Views</button><button id="tg">Gallery</button><button id="tf">Forecast</button><button id="th">How it works</button></div>
 <div class="card" id="views"><select id="v">%OPTS%</select>
 <img id="im" alt="GOES-19 view"><div id="bar"><button id="play">Play</button>
 <a class="b" id="gif" download>GIF</a><input type="range" id="s" min="0" max="0" value="0"><span id="t"></span></div>
 <p id="m" style="margin-top:8px"></p></div>
 <div class="card" id="gal" style="display:none"><select id="gv"><option value="">All views</option>%OPTS%</select>
 <div id="grid"></div><p id="gm"></p><button id="more" style="display:none">Load more</button></div>
+<div class="card" id="fc" style="display:none"><p id="fm">Loading…</p><div id="ft"></div></div>
 <div class="card" id="how" style="display:none">%HOW%</div>
 <div id="lb" style="display:none"><img id="lbi"><div><a class="b" id="lbs">Save</a> <button id="lbc">Close</button></div></div></main><script>
 const V=%VJSON%;
@@ -179,8 +315,19 @@ await Promise.all(F.map(f=>new Promise(r=>{const i=new Image();i.onload=i.onerro
 $('#play').disabled=false;$('#play').textContent='Pause';let i=+$('#s').value>=F.length-1?0:+$('#s').value;show(i);
 T=setInterval(()=>{i=(i+1)%F.length;show(i)},300)};
 const fmt=t=>{const d=new Date(t*1000);return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-function tab(n){$('#views').style.display=n==0?'':'none';$('#gal').style.display=n==1?'':'none';$('#how').style.display=n==2?'':'none';$('#tv').className=n==0?'on':'';$('#tg').className=n==1?'on':'';$('#th').className=n==2?'on':'';if(n)stop();if(n==1&&!$('#grid').children.length)gal(true)}
-$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);
+function tab(n){$('#fc').style.display=n==3?'':'none';$('#tf').className=n==3?'on':'';if(n==3)forecast();$('#views').style.display=n==0?'':'none';$('#gal').style.display=n==1?'':'none';$('#how').style.display=n==2?'':'none';$('#tv').className=n==0?'on':'';$('#tg').className=n==1?'on':'';$('#th').className=n==2?'on':'';if(n)stop();if(n==1&&!$('#grid').children.length)gal(true)}
+$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);
+let fdone=0;
+async function forecast(){if(fdone&&Date.now()-fdone<120000)return;fdone=Date.now();
+const r=await(await fetch(B+'api/forecast')).json();const h=r.offices.map(o=>'<h2>'+esc(o.office)+'</h2><div class="iss">'+esc(o.issued)+(o.age_h>12?' &middot; '+Math.round(o.age_h)+' h old':'')+'</div>'+
+o.sections.map(s=>'<h3>'+esc(s.head)+'</h3>'+s.paras.map(p=>'<p>'+esc(p)+'</p>').join('')).join('')).join('');
+$('#ft').innerHTML=h;$('#fm').textContent=r.offices.length?'The National Weather Service area forecast discussions, as received by the satellite broadcast. Written by forecasters for a technical audience.':'No forecast discussions have arrived yet.'}
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function stale(){try{const r=await(await fetch(B+'api/status')).json();const m=Math.round((r.now-r.last)/60);const b=$('#stale');
+if(!r.last){b.style.display='';b.textContent='No images have arrived yet.';return}
+if(m>=120){b.style.display='';b.textContent='The newest picture is '+(m>=1440?Math.round(m/1440)+' day(s)':Math.round(m/60)+' hours')+' old. The receiver may be offline, so these may not be current.'}
+else b.style.display='none';$('#lu').textContent=' Newest picture: '+(m<2?'just now':m<90?m+' min ago':Math.round(m/60)+' hours ago')+'.'}catch(e){}}
+stale();setInterval(stale,300000);
 let go=0;
 async function gal(reset){if(reset){go=0;$('#grid').innerHTML=''}
 const r=await(await fetch(B+'api/gallery?view='+$('#gv').value+'&offset='+go)).json();
@@ -219,10 +366,27 @@ class Handler(BaseHTTPRequestHandler):
             path, _, query = self.path.partition("?")
             q = parse_qs(query)
             m = re.fullmatch(r"/s/([A-Za-z0-9_-]{20,64})/(.*)", path)
-            if not m or not hmac.compare_digest(m.group(1), self.server.tok):
+            lk = link_for(m.group(1)) if m else None
+            if not lk:
                 return self.reply(404, b"not found")
             rest, base = m.group(2), f"/s/{m.group(1)}/"
+            if rest == "manifest.webmanifest":
+                man = {"name": "GOES-19 Satellite", "short_name": "GOES", "start_url": base, "scope": base,
+                       "display": "standalone", "background_color": "#0e1828", "theme_color": "#0e1828",
+                       "icons": [{"src": base + "icon.png", "sizes": "512x512", "type": "image/png"}]}
+                return self.reply(200, json.dumps(man).encode(), "application/manifest+json")
+            if rest == "icon.png" and _icon and _icon.exists():
+                return self.reply(200, _icon.read_bytes(), "image/png", {"Cache-Control": "max-age=86400"})
+            if rest == "api/status":
+                last = max([fr[-1][0] for v in VIEWS for fr in [frames(v)] if fr] or [0])
+                return self.reply(200, json.dumps({"last": round(last), "now": round(time.time())}).encode(),
+                                  "application/json", {"Cache-Control": "no-cache"})
+            if rest == "api/forecast":
+                data = _forecast_fn() if _forecast_fn else []
+                return self.reply(200, json.dumps({"offices": data}).encode(), "application/json",
+                                  {"Cache-Control": "max-age=120"})
             if rest == "":
+                count_visit(lk["id"])
                 opts = "".join(f'<option value="{k}">{v}</option>' for k, v in VIEWS.items())
                 page = PAGE.replace("%OPTS%", opts).replace("%BASE%", base).replace("%VJSON%", json.dumps(VIEWS)).replace("%HOW%", HOW).encode()
                 return self.reply(200, page, "text/html; charset=utf-8", {"Cache-Control": "no-cache"})
@@ -267,10 +431,11 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
-def start(frames_fn, gif_fn):
-    global _frames_fn, _gif_fn
-    _frames_fn, _gif_fn = frames_fn, gif_fn
+def start(frames_fn, gif_fn, forecast_fn=None, icon=None):
+    global _frames_fn, _gif_fn, _forecast_fn, _icon
+    _frames_fn, _gif_fn, _forecast_fn, _icon = frames_fn, gif_fn, forecast_fn, icon
+    links()
+    _load_visits()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    srv.tok = token()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"share page on 127.0.0.1:{PORT}", flush=True)

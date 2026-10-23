@@ -368,18 +368,50 @@ def mail_status():
     tz = ZoneInfo("America/New_York")
     now = datetime.datetime.now(tz)
     hh, mm = map(int, cfg["send_time"].split(":"))
-    sent_today = DIGEST_STATE.exists() and DIGEST_STATE.read_text().strip() == f"{now:%Y-%m-%d}"
+    st = DIGEST_STATE.read_text().split() if DIGEST_STATE.exists() else []
+    sent_today = bool(st) and st[0] == f"{now:%Y-%m-%d}" and "partial" not in st
     nxt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     in_window = nxt <= now < nxt + datetime.timedelta(minutes=SEND_WINDOW_MIN)
     if sent_today or (now >= nxt and not in_window):
         nxt += datetime.timedelta(days=1)
     elif in_window:
         nxt = now          # due now; the next 10-minute check will send it
-    last = DIGEST_STATE.read_text().strip() if DIGEST_STATE.exists() else None
+    last = st[0] if st else None
     return {"sender": cfg["sender"], "recipients": cfg["recipients"], "send_time": cfg["send_time"],
             "password_ok": Path(cfg["password_file"]).exists(), "last_sent": last,
             "next_send": nxt.strftime("%a %b %-d, %-I:%M %p %Z") + (" (due now)" if in_window and not sent_today else ""),
             "max": MAX_RECIPIENTS}
+
+
+def push_topic():
+    a = tomllib.loads(MAIL_CONF.read_text()).get("alerts", {})
+    return str(a.get("ntfy_topic", ""))
+
+
+def set_push_topic(topic):
+    topic = str(topic or "").strip()
+    if topic and not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", topic):
+        raise ValueError("use 6-64 letters, numbers, - or _ (pick something hard to guess)")
+    text = MAIL_CONF.read_text()
+    line = f'ntfy_topic = "{topic}"'
+    if re.search(r"(?m)^ntfy_topic\s*=", text):
+        text = re.sub(r'(?m)^ntfy_topic\s*=.*$', line, text)
+    elif re.search(r"(?m)^\[alerts\]\s*$", text):
+        text = re.sub(r"(?m)^(\[alerts\]\s*)$", lambda m: m.group(1) + "\n" + line, text, count=1)
+    else:
+        text = text.rstrip("\n") + "\n\n[alerts]\n" + line + "\n"
+    tomllib.loads(text)   # refuse to write anything that isn't valid TOML
+    save_text(MAIL_CONF, text)
+
+
+def share_status():
+    cfg = tomllib.loads(MAIL_CONF.read_text())
+    return {"public_url": str(cfg.get("public_url", "")).rstrip("/"), "links": share.summary(),
+            "recipients": cfg["recipients"], "topic": push_topic()}
+
+
+def forecast_data():
+    return digest_module().forecast_full(tomllib.loads(MAIL_CONF.read_text()))
 
 
 def mail_update(recipients=None, send_time=None):
@@ -701,6 +733,10 @@ class Handler(BaseHTTPRequestHandler):
                                               q.get("region", [""])[0]))
             if u.path == "/api/mail/describe":
                 return self.send_json(mail_describe(q.get("path", [""])[0]))
+            if u.path == "/api/share":
+                return self.send_json(share_status())
+            if u.path == "/api/forecast":
+                return self.send_json({"offices": forecast_data()})
             if u.path == "/api/mail":
                 return self.send_json(mail_status())
             if u.path == "/api/history":
@@ -789,6 +825,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"result": mail_image(str(body.get("path", "")), body.get("to"), body.get("note"))})
             if path == "/api/mail/test":
                 return self.send_json({"result": mail_test(str(body.get("to", "")).strip())})
+            if path == "/api/share/add":
+                share.add_link(body.get("name", ""), body.get("email", ""))
+                return self.send_json(share_status())
+            if path == "/api/share/rotate":
+                share.rotate_link(str(body.get("id", "")))
+                return self.send_json(share_status())
+            if path == "/api/share/revoke":
+                share.revoke_link(str(body.get("id", "")))
+                return self.send_json(share_status())
+            if path == "/api/push/topic":
+                set_push_topic(body.get("topic"))
+                return self.send_json(share_status())
             if path == "/api/alerts/test":
                 kind = body.get("kind")
                 if kind == "signal":
@@ -796,6 +844,11 @@ class Handler(BaseHTTPRequestHandler):
                                       "Real ones are sent when the signal is lost, a process is restarted, "
                                       "the disk is nearly full or the Pi overheats.", key="test", every=60)
                     return self.send_json({"result": "sent" if ok else "not sent (wait a minute, or check mail setup)"})
+                if kind == "push":
+                    cfg = tomllib.loads(MAIL_CONF.read_text())
+                    ok = digest_module().push(cfg, "GOES test push", "Push notifications from the GOES receiver work.")
+                    return self.send_json({"result": "push sent - check your phone" if ok
+                                           else "not sent (no topic set, or ntfy.sh unreachable)"})
                 if kind == "weather":
                     hits = watch.wx_check(dry=True)
                     return self.send_json({"result": "no new matching warnings in the feed right now"
@@ -827,7 +880,7 @@ if __name__ == "__main__":
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
     try:
-        share.start(lambda v: digest_module().frames(v), make_gif)
+        share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")
     except OSError as e:
         print("share page not started:", e, flush=True)
     if os.environ.get("GOES_AUTOSTART", "1") == "1":
