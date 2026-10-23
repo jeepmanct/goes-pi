@@ -20,3 +20,4 @@ cache/
 *.bak[0-9]*
 .digest-weekly-sent
 .digest-weekly-failed
+pi-history.jsonl
