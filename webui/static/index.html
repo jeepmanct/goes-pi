@@ -88,9 +88,9 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 #gal .cap span { opacity: .65; word-break: break-all; }
 
 #globe-img { width: 100%; display: block; border-radius: 8px; background: #000; cursor: pointer; }
-#globe-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
-#globe-bar input[type=range] { flex: 1; width: auto; }
-#globe-time { font-variant-numeric: tabular-nums; min-width: 9.5em; text-align: right; }
+#globe-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+#globe-bar input[type=range] { flex: 1 1 120px; width: auto; min-width: 0; }
+#globe-time { font-variant-numeric: tabular-nums; flex: 0 1 auto; margin-left: auto; text-align: right; white-space: nowrap; }
 
 .mrow { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .mrow:first-of-type { border-top: 0; }
