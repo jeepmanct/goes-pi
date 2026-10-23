@@ -44,6 +44,7 @@ def _load(name):
 
 
 watch = _load("watch")
+share = _load("share")
 HOME = Path.home()
 GOES_DIR = HOME / "goes"
 DATA_DIR = GOES_DIR / "data"
@@ -825,6 +826,10 @@ if __name__ == "__main__":
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
+    try:
+        share.start(lambda v: digest_module().frames(v), make_gif)
+    except OSError as e:
+        print("share page not started:", e, flush=True)
     if os.environ.get("GOES_AUTOSTART", "1") == "1":
         def autostart():
             """Bring the receiver up after a boot or panel restart (set GOES_AUTOSTART=0 to disable)."""

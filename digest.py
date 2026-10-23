@@ -249,8 +249,12 @@ def build(cfg, now_local):
     def cap(t, text):
         return f"{text} - {t.astimezone(LOCAL):%a %-I:%M %p %Z}"
 
+    link = share_link(cfg)
+
     # plain text
     txt = [f"GOES Northeast briefing - {now_local:%A, %B %-d}", ""]
+    if link:
+        txt += [f"Browse all the maps and the gallery: {link}", ""]
     for _cid, text, (t, _p) in imgs:
         txt.append(f"[picture] {cap(t, text)}")
     if gif:
@@ -272,6 +276,10 @@ def build(cfg, now_local):
          'color:#1b2430;line-height:1.45">',
          f'<h2 style="margin:0 0 4px">Northeast briefing</h2>'
          f'<div style="color:#667;margin-bottom:14px">{now_local:%A, %B %-d}</div>']
+    if link:
+        h.append(f'<p style="margin:0 0 6px"><a href="{html.escape(link)}" style="display:inline-block;background:#1f6feb;'
+                 'color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:600">'
+                 'Browse all maps &amp; gallery</a></p>')
     for cid, text, (t, _p) in imgs:
         h.append(f'<p style="margin:14px 0 4px"><img src="cid:{cid}" style="width:100%;border-radius:6px" alt="{html.escape(text)}"><br>'
                  f'<span style="font-size:13px;color:#556">{html.escape(cap(t, text))}</span></p>')
@@ -306,6 +314,16 @@ def build(cfg, now_local):
     if gif:
         body.add_related(gif, "image", "gif", cid="<loop>")
     return msg
+
+
+def share_link(cfg):
+    """Public read-only page URL (mail.conf public_url + the secret token), or None if not set up."""
+    base = str(cfg.get("public_url", "")).rstrip("/")
+    try:
+        tok = (GOES / "share-token.txt").read_text().strip()
+    except OSError:
+        return None
+    return f"{base}/s/{tok}/" if base.startswith("https://") and tok else None
 
 
 # ---- one picture by email (from the app's image viewer) ------------------------

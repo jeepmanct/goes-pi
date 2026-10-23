@@ -11,3 +11,4 @@ mail.conf
 signal-history.jsonl
 .alerts-seen
 webui/*.bak*
+share-token.txt
