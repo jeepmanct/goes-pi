@@ -234,6 +234,11 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <pre id="sdr-out" style="margin-top:10px;display:none"></pre>
   </div>
   <div class="card">
+    <h2>Panel</h2>
+    <button class="b ghost" id="webui-restart">Restart panel</button>
+    <p class="msg">Reloads this web panel, for example after an update. goesrecv and goesproc are stopped for about a minute and start again by themselves. The page reloads when the panel is back.</p>
+  </div>
+  <div class="card">
     <h2>System</h2>
     <div id="sys"></div>
   </div>
@@ -579,6 +584,24 @@ document.addEventListener('click', async e => {
   $('#ctl-msg').textContent = `${a}: ${r.result || r.error}`;
   await pollStatus();
 });
+$('#webui-restart').onclick = async e => {
+  if (!confirm('Restart the panel? The receiver stops for about a minute and then starts again by itself.')) return;
+  const btn = e.target, msg = $('#ctl-msg');
+  btn.disabled = true; msg.textContent = 'Restarting the panel…';
+  const r = await api('/api/webui/restart', {});
+  if (r.error) { msg.textContent = r.error; btn.disabled = false; return; }
+  let sawDown = false;
+  for (let i = 0; i < 60; i++) {                       // wait up to 2 minutes for it to go down and come back
+    await new Promise(res => setTimeout(res, 2000));
+    try {
+      const x = await fetch('/api/status', {cache: 'no-store'});
+      if (x.ok && sawDown) { location.reload(); return; }
+      if (!x.ok) sawDown = true;
+    } catch { sawDown = true; }
+    msg.textContent = sawDown ? 'Waiting for the panel to come back…' : 'Restarting the panel…';
+  }
+  msg.textContent = 'The panel has not come back yet. Reload this page in a minute.'; btn.disabled = false;
+};
 $('#aim-toggle').onclick = async () => {
   const run = status.goesrecv && status.goesrecv.running;
   $('#aim-toggle').disabled = true;

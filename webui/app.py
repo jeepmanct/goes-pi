@@ -1001,6 +1001,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("unknown test")
             if path == "/api/sdrtest":
                 return self.send_json(sdr_check())
+            if path == "/api/webui/restart":
+                # the service has Restart=always: ending the process (cleanly, via the SIGTERM handler that stops
+                # goesrecv/goesproc) makes systemd start a fresh panel about 5 seconds later; no sudo needed
+                threading.Thread(target=lambda: (time.sleep(1), os.kill(os.getpid(), signal.SIGTERM)), daemon=True).start()
+                return self.send_json({"ok": True})
             self.send_json({"error": "not found"}, 404)
         except (ValueError, KeyError, tomllib.TOMLDecodeError) as e:
             self.send_json({"error": str(e)}, 400)
