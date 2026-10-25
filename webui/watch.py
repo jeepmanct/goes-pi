@@ -814,6 +814,77 @@ def _bestimage_loop():
         time.sleep(1800)
 
 
+SKY_STATE = GOES_DIR / ".skywarn-state.json"
+SKY_WATCH_PHEN = {"TO", "SV", "FF", "HU", "TR", "SS", "CF"}      # watches worth a push; warnings use SKY_PHEN
+
+
+def _skywarn():
+    m = sys.modules.get("goes_skywarn")
+    if m is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("goes_skywarn", Path(__file__).resolve().parent / "skywarn.py")
+        m = importlib.util.module_from_spec(spec)
+        sys.modules["goes_skywarn"] = m
+        spec.loader.exec_module(m)
+    return m
+
+
+def skywarn_check(dry=False):
+    """Push new Connecticut warnings/watches and spotter-activation changes. First run (no state file) only records.
+    Returns the list of (title, message) it sent or would send."""
+    sw = _skywarn()
+    try:
+        state = json.loads(SKY_STATE.read_text())
+        first = False
+    except (OSError, ValueError):
+        state, first = {"alerts": [], "spotter": {}}, True
+    sent = []
+    alerts = sw.ct_alerts()
+    active = {a["key"] for a in alerts}
+    for a in alerts:
+        if a["key"] in state["alerts"]:
+            continue
+        wanted = (a["level"] == "W" and a["phen"] in sw.SKY_PHEN) or (a["level"] == "A" and a["phen"] in SKY_WATCH_PHEN)
+        if not wanted:
+            continue
+        where = "Stratford" if a["stratford"] else "Connecticut"
+        ends = ""
+        if a["ends"]:
+            ends = f" until {dt.datetime.fromtimestamp(a['ends'], dt.timezone.utc).astimezone(dt.timezone(dt.timedelta(hours=-4 if time.localtime().tm_isdst > 0 else -5))):%-I:%M %p}"
+        msg = f"{a['name']} for {', '.join(a['counties']) or 'Connecticut'}{ends} ({a['office']})."
+        sent.append((f"SKYWARN: {a['name']} ({where})", msg, a))
+    for o in sw.spotter_status():
+        prev = state["spotter"].get(o["office"])
+        if prev is not None and prev != o["level"]:
+            if o["level"] in ("possible", "requested"):
+                sent.append((f"SKYWARN: spotters {o['level']} ({o['office']})", o["statement"][:400] or "See the Skywarn tab.", None))
+            elif o["level"] == "none":
+                sent.append((f"SKYWARN: spotter activation ended ({o['office']})", o["statement"][:400], None))
+        state["spotter"][o["office"]] = o["level"]
+    out = []
+    for title, msg, a in sent:
+        if not first and not dry:
+            urgent = a is not None and a["stratford"] and a["level"] == "W" and a["phen"] in ("TO", "SV", "FF")
+            push_only(title, msg, key=title + msg[:60], every=3 * 3600,
+                      priority="urgent" if urgent else "high" if (a is None or a["level"] == "W") else "default",
+                      tags="rotating_light" if a is not None else "mag")
+        out.append((title, msg))
+    state["alerts"] = sorted(active)
+    if not dry:
+        SKY_STATE.write_text(json.dumps(state))
+    return out
+
+
+def _skywarn_loop():
+    time.sleep(150)
+    while True:
+        try:
+            skywarn_check()
+        except Exception as e:
+            print("skywarn check error:", e, flush=True)
+        time.sleep(180)
+
+
 def _backup_loop():
     """Weekly copy of the git-ignored state files to the big drive (Sundays after 03:30 US Eastern, retried hourly)."""
     import importlib.util
@@ -838,5 +909,5 @@ def _backup_loop():
 
 
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ()), (_backup_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ()), (_backup_loop, ()), (_skywarn_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()

@@ -323,7 +323,7 @@ def active_alerts(offices=None, now=None, zones=None):
                 events.pop(key, None)
                 continue
             events[key] = {"office": office[1:], "name": f"{PHEN.get(phen, phen)} {SIG.get(sig, sig)}",
-                           "level": sig, "ends": _vtec_time(end), "file": r["name"], "t": r["t"]}
+                           "phen": phen, "level": sig, "ends": _vtec_time(end), "file": r["name"], "t": r["t"]}
     out = [e for e in events.values() if e["ends"] is None or e["ends"] > now]
     out.sort(key=lambda e: ("WAYS".index(e["level"]), -e["t"]))
     return out

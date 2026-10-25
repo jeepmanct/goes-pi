@@ -27,3 +27,4 @@ storm.json
 .storm-announced
 .health-sent
 .bestimage-sent
+.skywarn-state.json

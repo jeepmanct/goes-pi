@@ -391,6 +391,16 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="row"><button class="b ghost" id="wx-more" style="display:none">Load more</button></div>
 </section>
 
+<section id="skywarn">
+  <div class="banner" id="sk-banner">Loading…</div>
+  <div class="card"><h2>Warnings and watches for Connecticut</h2><div id="sk-alerts"></div></div>
+  <div class="card"><h2>Spotter statements</h2><div id="sk-spot"></div></div>
+  <div class="card"><h2 id="sk-rep-h">Local storm reports</h2><div id="sk-rep"></div></div>
+  <div class="card"><h2>Severe weather outlook (SPC)</h2><div id="sk-out"></div></div>
+  <div class="card"><h2>Tropical and coastal</h2><div id="sk-trop"></div></div>
+  <p class="msg">From National Weather Service bulletins received over the satellite. Not an official warning source: use NOAA Weather Radio, the NWS website or your net control for anything safety critical.</p>
+</section>
+
 <section id="charts">
   <div class="card">
     <div class="row">
@@ -482,7 +492,7 @@ const api = async (path, body) => {
 // ---- tabs
 // Everyday tabs sit in the bar; the admin ones are in the More menu. Logs is hidden (its section and code are kept:
 // add ['logs','Logs'] to MORE to bring the tab back).
-const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
+const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['skywarn','Skywarn'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
 const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
@@ -524,6 +534,7 @@ function show(id) {
   if (id === 'mail') { loadMail(); loadShare(); }
   if (id === 'forecast') loadForecast();
   if (id === 'weather') loadWeather();
+  if (id === 'skywarn') loadSkywarn();
   if (id === 'aim') renderSky();
   if (id === 'charts') loadCharts();
   if (id === 'signal') loadSignal();
@@ -1361,6 +1372,52 @@ function renderSky() {
   line(`Moon: ${moon.name}, ${moon.illum}% lit`);
 }
 setInterval(() => { if ($('#aim').classList.contains('active')) renderSky(); }, 30000);
+
+// ---- skywarn: spotter status, CT warnings, storm reports, outlook, tropical
+function skLine(box, text, bold, cls) {
+  const d = document.createElement('div'); d.style.margin = '5px 0'; if (cls) d.className = cls;
+  if (bold) { const b = document.createElement('b'); b.textContent = bold + ' '; d.append(b); }
+  d.append(document.createTextNode(text)); box.append(d); return d;
+}
+async function loadSkywarn() {
+  const r = await api('/api/skywarn');
+  if (r.error) { $('#sk-banner').textContent = r.error; return; }
+  const lv = r.spotter.level, b = $('#sk-banner');
+  b.className = 'banner ' + (lv === 'requested' ? 'bad' : lv === 'possible' ? 'warn' : lv === 'none' ? 'good' : '');
+  const names = {none: 'Spotter activation not expected', possible: 'Spotter activation possible', requested: 'Spotters requested', unknown: 'Spotter status unknown'};
+  b.innerHTML = ''; b.append(names[lv] || lv);
+  const sm = document.createElement('small'); sm.textContent = r.spotter.offices.map(o => `${o.office}: ${o.level}`).join(' · ') || 'No outlook received yet'; b.append(sm);
+  const al = $('#sk-alerts'); al.innerHTML = '';
+  if (!r.alerts.length) skLine(al, 'Nothing in force for any Connecticut zone.');
+  r.alerts.forEach(a => {
+    const d = skLine(al, `${a.counties.join(', ') || 'Connecticut'}${a.ends ? ', until ' + wxFmt(a.ends) : ''} (${a.office})`, a.name + (a.stratford ? ' – includes Stratford' : ''));
+    if (a.level === 'W') d.style.color = 'var(--bad)'; else if (a.level === 'A') d.style.color = 'var(--warn)';
+  });
+  const sp = $('#sk-spot'); sp.innerHTML = '';
+  if (!r.spotter.offices.length) skLine(sp, 'No Hazardous Weather Outlook received in the last 36 hours.');
+  r.spotter.offices.forEach(o => {
+    skLine(sp, o.statement || 'No spotter statement in the outlook.', `${o.office} (${wxFmt(o.t)})`);
+    if (o.day1) { const x = skLine(sp, o.day1); x.className = 'msg'; }
+  });
+  $('#sk-rep-h').textContent = `Local storm reports within ${r.radius_miles} miles`;
+  const rp = $('#sk-rep'); rp.innerHTML = '';
+  if (!r.reports.length) skLine(rp, 'No reports in the last 48 hours.');
+  r.reports.forEach(x => skLine(rp, `${x.where}, ${x.county} ${x.state} · ${x.miles} mi · ${x.source}${x.remarks ? ' · ' + x.remarks : ''}`,
+    `${wxFmt(x.t)} ${x.event}${x.mag ? ' ' + x.mag : ''}`));
+  const ot = $('#sk-out'); ot.innerHTML = '';
+  if (!r.outlook.length) skLine(ot, 'No outlook received yet.');
+  r.outlook.forEach(o => {
+    skLine(ot, o.headline || 'No severe thunderstorm areas forecast.', `Day ${o.day} (${o.valid || wxFmt(o.t)})`);
+    if (o.relevant.length) o.relevant.forEach(p => { const x = skLine(ot, p); x.className = 'msg'; });
+    else { const x = skLine(ot, 'Connecticut and New England are not mentioned.'); x.className = 'msg'; }
+  });
+  const tp = $('#sk-trop'); tp.innerHTML = '';
+  const t = r.tropical;
+  skLine(tp, t.outlook || 'No tropical outlook received yet.', 'Atlantic outlook' + (t.outlook_t ? ' (' + wxFmt(t.outlook_t) + ')' : ''));
+  if (t.storm) skLine(tp, `${t.storm.name} near ${t.storm.lat}, ${t.storm.lon}`, 'Active storm');
+  if (t.coastal.length) t.coastal.forEach(a => skLine(tp, `${a.name}${a.ends ? ' until ' + wxFmt(a.ends) : ''}`, 'Coastal alert for Stratford:'));
+  else skLine(tp, 'No coastal or marine alerts for Stratford or the western Sound.');
+}
 
 // ---- charts (EMWIN graphics: radar, warnings map, fronts...)
 let chFrames = [], chTimer = null, chReady = false;
