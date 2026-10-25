@@ -31,6 +31,12 @@ nav { display: flex; gap: 4px; padding: 8px 16px 0; overflow-x: auto; border-bot
 nav button { background: none; border: 0; color: var(--muted); padding: 10px 14px; font-size: 15px;
   border-bottom: 3px solid transparent; cursor: pointer; white-space: nowrap; }
 nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+.menu { position: fixed; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+  min-width: 170px; box-shadow: 0 8px 24px #0006; display: none; }
+.menu.open { display: block; }
+.menu button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 11px 12px;
+  font-size: 15px; border-radius: 6px; cursor: pointer; }
+.menu button:hover, .menu button.active { background: var(--bg); }
 main { padding: 16px; max-width: 1000px; margin: 0 auto; }
 section { display: none; }
 section.active { display: block; }
@@ -473,16 +479,42 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['weather','Weather'],['charts','Charts'],['mail','Mail'],['logs','Logs']];
+// Everyday tabs sit in the bar; the admin ones are in the More menu. Logs is hidden (its section and code are kept:
+// add ['logs','Logs'] to MORE to bring the tab back).
+const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
+const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
   b.onclick = () => show(id);
   $('#tabs').append(b);
 });
+const moreBtn = document.createElement('button');
+moreBtn.textContent = 'More ▾'; moreBtn.id = 'more-btn';
+$('#tabs').append(moreBtn);
+const menu = document.createElement('div'); menu.className = 'menu'; menu.id = 'more-menu';
+MORE.forEach(([id, name]) => {
+  const b = document.createElement('button');
+  b.textContent = name; b.dataset.tab = id;
+  b.onclick = () => { menu.classList.remove('open'); show(id); };
+  menu.append(b);
+});
+document.body.append(menu);
+moreBtn.onclick = e => {
+  e.stopPropagation();
+  if (menu.classList.toggle('open')) {
+    const r = moreBtn.getBoundingClientRect();
+    menu.style.top = r.bottom + 4 + 'px';
+    menu.style.left = Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8)) + 'px';
+  }
+};
+document.addEventListener('click', () => menu.classList.remove('open'));
 function show(id) {
   document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === id));
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  document.querySelectorAll('nav button[data-tab], .menu button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  const inMore = MORE.find(([k]) => k === id);
+  moreBtn.classList.toggle('active', !!inMore);
+  moreBtn.textContent = (inMore ? inMore[1] : 'More') + ' ▾';
   try { localStorage.tab = id; } catch {}
   if (id === 'config') loadConfig();
   if (id === 'images') loadDir(curPath);
@@ -498,6 +530,7 @@ function show(id) {
 }
 let startTab = 'aim';
 try { startTab = localStorage.tab || 'aim'; } catch {}
+if (![...TABS, ...MORE].some(([k]) => k === startTab)) startTab = 'aim';     // e.g. a remembered, now hidden, Logs tab
 
 // ---- status
 let status = {};
