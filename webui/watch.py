@@ -5,13 +5,13 @@ Started from app.py with start(procs). Everything here runs in daemon threads.
   - watchdog: restarts goesrecv/goesproc that died or stalled while the user wants them running
   - alerts: emails for no-signal, restarts, low disk / high temperature, and NWS warnings from EMWIN
 """
+import collections
 import datetime as dt
 import json
 import re
 import statistics
 import sys
 import shutil
-import smtplib
 import threading
 import time
 import tomllib
@@ -37,6 +37,13 @@ WX_MAX_PER_HOUR = 10
 _lock = threading.Lock()
 _alerts = {}              # key -> last time sent (monotonic)
 _wx_sent = []             # monotonic times of weather emails
+_slow = collections.deque(maxlen=200)      # (time, path, seconds) of slow GET /api/ requests
+
+
+def note_slow(path, secs):
+    _slow.append((time.time(), path, secs))
+
+
 _state = {"signal": "unknown", "last_restart": None, "last_alert": None, "restarts": []}
 _digest_mod = {}
 
@@ -554,6 +561,10 @@ def health_text(now=None):
     restarts = len(_state["restarts"])
     if restarts:
         bits.append(f"{restarts} restart{'s' if restarts > 1 else ''} in the last hour")
+    slow = [s for s in list(_slow) if now - s[0] <= 86400]
+    if slow:
+        worst = max(slow, key=lambda s: s[2])
+        bits.append(f"{len(slow)} slow panel request{'s' if len(slow) > 1 else ''} (>1 s) in 24 h, slowest {worst[1]} {worst[2]:.1f} s")
     return ". ".join(bits) + "."
 
 

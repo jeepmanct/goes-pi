@@ -35,7 +35,7 @@ try:
 except ImportError:
     Image = None
 
-GZIP_SUFFIXES = {".html", ".css", ".js", ".json", ".svg"}
+GZIP_SUFFIXES = {".html", ".css", ".js", ".json", ".svg"}      # the app's own files only (ETag + no-cache)
 _gz_cache = {}          # path -> (mtime_ns, gzipped bytes)
 
 
@@ -694,6 +694,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def handle_one_request(self):
+        t0 = time.time()
+        super().handle_one_request()
+        secs = time.time() - t0
+        path = getattr(self, "path", "")
+        if secs > 1 and self.command == "GET" and path.startswith("/api/"):
+            watch.note_slow(path.split("?")[0], secs)
+
     def client_ip(self):
         # Behind `tailscale serve` every request comes from localhost; trust its
         # X-Forwarded-For only in that case so lockouts stay per-client.
@@ -762,7 +770,15 @@ class Handler(BaseHTTPRequestHandler):
             hit = _gz_cache.get(path)
             if not hit or hit[0] != st.st_mtime_ns:
                 hit = _gz_cache[path] = (st.st_mtime_ns, gzip.compress(path.read_bytes(), 6))
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
             self.send_response(200)
+            self.send_header("ETag", etag)
             self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Length", str(len(hit[1])))
@@ -798,7 +814,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             # the app page changes often; images/thumbnails are immutable
             self.send_header("Cache-Control",
-                             "no-cache" if path.suffix == ".html" else "max-age=3600")
+                             "no-cache" if path.suffix in (".html", ".css", ".js") else "max-age=3600")
         self.end_headers()
         with open(path, "rb") as f:
             f.seek(start)
@@ -852,6 +868,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", "/index.html"):
                 return self.send_file(STATIC / "index.html")
+            if u.path in ("/app.css", "/app.js"):
+                return self.send_file(STATIC / u.path[1:])
             if u.path == "/api/status":
                 return self.send_json(status())
             if u.path == "/api/stats":

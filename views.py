@@ -481,7 +481,6 @@ def draw_cities(draw, max_rank, box, f, scale, size, fs):
         font = ImageFont.load_default()
     r0, c0 = box[0], box[2]
     placed = []
-    gap = fs * 3.2
     for name, lat, lon, rank in sorted(CITIES, key=lambda c: c[3]):
         if rank > max_rank or (abs(lat - HOME[0]) < 0.12 and abs(lon - HOME[1]) < 0.12):
             continue                                  # the home marker covers Stratford/Bridgeport
@@ -509,7 +508,7 @@ def font_for(width):
 
 def graticule(draw, box, f, color):
     """Latitude/longitude lines every 15 degrees (full disk only)."""
-    r0, _r1, c0, _c1 = box
+    _r0, _r1, _c0, _c1 = box
     for lat in range(-75, 90, 15):
         lons = np.linspace(-180, 180, 721)
         _draw_poly(draw, np.full_like(lons, lat), lons, box, f, 1, color)
@@ -565,7 +564,7 @@ def build_overlay(spec, box, f, size, disc):
         if scale >= 2 and spec.get("name") != "STRATFORD_LIS" or spec.get("name") == "NYC_AREA":
             marks.append(("NYC", NYC, (120, 190, 255, 230), (190, 220, 255, 245)))
         for label, (lat, lon), ring, txt in marks:
-            c, r, vis = to_pixels(np.array([lat]), np.array([lon]))
+            c, r, _vis = to_pixels(np.array([lat]), np.array([lon]))
             x, y = (c[0] - box[2] + 0.5) / f * scale, (r[0] - box[0] + 0.5) / f * scale
             if 0 <= x < size[0] and 0 <= y < size[1]:
                 rad = max(5, fs // 3)
