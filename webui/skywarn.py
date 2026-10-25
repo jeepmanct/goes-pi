@@ -99,6 +99,28 @@ def _vtec_end(s):
     return _p()._vtec_time(s)
 
 
+_vtec_cache = {}      # product name -> parsed VTEC lines (a bulletin never changes once received)
+
+
+def _vtec_events(name):
+    hit = _vtec_cache.get(name)
+    if hit is None:
+        p = _p()
+        hit = []
+        try:
+            text = p._read(name)
+        except OSError:
+            return hit
+        for seg in text.split("$$"):
+            zones = {z for z in p.ugc_zones(seg) if z.startswith("CT") or z in STRATFORD_ZONES}
+            if zones:
+                for m in p.VTEC_RE.finditer(seg):
+                    _st, action, office, phen, sig, etn, _b, end = m.groups()
+                    hit.append((zones, action, office, phen, sig, etn, end))
+        _vtec_cache[name] = hit
+    return hit
+
+
 def ct_alerts(now=None):
     """Warnings, watches, advisories in force for any Connecticut zone, from the last 72 h of bulletins."""
     p = _p()
@@ -108,25 +130,18 @@ def ct_alerts(now=None):
     for r in sorted(p._rows(), key=lambda r: r["t"]):
         if r["t"] < cut or r["cat"] not in ALERT_CATS:
             continue
-        try:
-            text = p._read(r["name"])
-        except OSError:
-            continue
-        for seg in text.split("$$"):
-            zones = {z for z in p.ugc_zones(seg) if z.startswith("CT") or z in STRATFORD_ZONES}
-            if not zones:
+        for zones, action, office, phen, sig, etn, end in _vtec_events(r["name"]):
+            key = (office, phen, sig, etn)
+            if action in ("CAN", "EXP"):
+                events.pop(key, None)
                 continue
-            for m in p.VTEC_RE.finditer(seg):
-                _st, action, office, phen, sig, etn, _b, end = m.groups()
-                key = (office, phen, sig, etn)
-                if action in ("CAN", "EXP"):
-                    events.pop(key, None)
-                    continue
-                prev = events.get(key, {"zones": set()})
-                events[key] = {"office": office[1:], "phen": phen, "sig": sig, "etn": etn,
-                               "name": f"{p.PHEN.get(phen, phen)} {p.SIG.get(sig, sig)}", "ends": _vtec_end(end), "t": r["t"],
-                               "zones": (prev["zones"] | zones) if action in ("CON", "EXT", "EXA", "EXB", "COR", "ROU") else zones,
-                               "file": r["name"], "action": action}
+            prev = events.get(key, {"zones": set()})
+            events[key] = {"office": office[1:], "phen": phen, "sig": sig, "etn": etn,
+                           "name": f"{p.PHEN.get(phen, phen)} {p.SIG.get(sig, sig)}", "ends": _vtec_end(end), "t": r["t"],
+                           "zones": (prev["zones"] | zones) if action in ("CON", "EXT", "EXA", "EXB", "COR", "ROU") else zones,
+                           "file": r["name"], "action": action}
+    for gone in set(_vtec_cache) - {r["name"] for r in p._rows()}:
+        _vtec_cache.pop(gone, None)
     out = []
     for key, e in events.items():
         if e["ends"] is not None and e["ends"] <= now:

@@ -105,6 +105,16 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 .mrow button.b { padding: 8px 12px; font-size: 14px; }
 .mstat { margin: 0 0 6px; }
 .mstat b { font-weight: 600; }
+/* spacing helpers */
+.w-auto { width: auto !important; }
+.mt8 { margin-top: 8px !important; }
+.mt10 { margin-top: 10px !important; }
+.mt12 { margin-top: 12px !important; }
+.mt14 { margin-top: 14px !important; }
+.ml-auto { margin-left: auto !important; }
+.m0 { margin: 0 !important; }
+.spark { height: 110px !important; margin-top: 6px !important; }
+.grow12 { flex: 1 !important; min-width: 12em !important; }
 </style>
 </head>
 <body>
@@ -121,14 +131,14 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card row">
     <button class="b go" id="aim-toggle">Start goesrecv</button>
     <button class="b ghost" id="sound">🔇 Sound off</button>
-    <span class="row" style="margin-left:auto">
+    <span class="row ml-auto">
       Gain <button class="b ghost" id="gain-dn">−</button>
       <b id="gain-val" style="min-width:32px;text-align:center">–</b>
       <button class="b ghost" id="gain-up">+</button>
     </span>
   </div>
   <div class="grid" id="metrics"></div>
-  <div class="card" style="margin-top:14px">
+  <div class="card mt14">
     <h2>Viterbi errors (lower is better) – last 2 min</h2>
     <canvas id="c-vit"></canvas>
   </div>
@@ -150,14 +160,14 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 
 <section id="signal">
   <div class="card row">
-    <select id="sig-range" style="width:auto">
+    <select class="w-auto" id="sig-range">
       <option value="6">Last 6 hours</option>
       <option value="24" selected>Last 24 hours</option>
       <option value="72">Last 3 days</option>
       <option value="168">Last 7 days</option>
       <option value="336">Last 14 days</option>
     </select>
-    <span class="msg" id="sig-state" style="margin-left:auto"></span>
+    <span class="msg ml-auto" id="sig-state"></span>
   </div>
   <div class="card"><h2>Viterbi errors (lower is better)</h2><canvas id="h-vit"></canvas></div>
   <div class="card"><h2>Packets per second</h2><canvas id="h-ok"></canvas></div>
@@ -185,13 +195,13 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 
 <section id="pi">
   <div class="grid" id="pi-tiles"></div>
-  <div class="card" style="margin-top:14px"><h2>CPU cores</h2><div id="pi-cores"></div></div>
+  <div class="card mt14"><h2>CPU cores</h2><div id="pi-cores"></div></div>
   <div class="card"><h2>Memory</h2><div id="pi-mem"></div></div>
   <div class="card"><h2>Storage</h2><div id="pi-disks"></div><p class="msg" id="pi-data"></p></div>
   <div class="card"><h2>Network</h2><div id="pi-net"></div></div>
   <div class="card"><h2>Busiest processes</h2><div id="pi-top"></div></div>
   <div class="card row">
-    <select id="pi-range" style="width:auto">
+    <select class="w-auto" id="pi-range">
       <option value="1">Last hour</option>
       <option value="6">Last 6 hours</option>
       <option value="24" selected>Last 24 hours</option>
@@ -199,7 +209,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
       <option value="168">Last 7 days</option>
       <option value="336">Last 14 days</option>
     </select>
-    <span class="msg" id="pi-hist-note" style="margin-left:auto"></span>
+    <span class="msg ml-auto" id="pi-hist-note"></span>
   </div>
   <div class="card"><h2>CPU usage (%)</h2><canvas id="ph-cpu"></canvas></div>
   <div class="card"><h2>Memory used (%)</h2><canvas id="ph-mem"></canvas></div>
@@ -253,7 +263,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <label>Device index</label><input id="f-device_index" type="number">
     <label>Bias tee (powers the SAWbird+ from an RTL-SDR Blog V3/V4)</label>
     <select id="f-bias_tee"><option value="true">On</option><option value="false">Off</option></select>
-    <div class="row" style="margin-top:14px">
+    <div class="row mt14">
       <button class="b" id="save-fields">Save</button>
       <button class="b ghost" id="save-restart">Save &amp; restart goesrecv</button>
     </div>
@@ -262,19 +272,19 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card">
     <h2>goesrecv.conf (raw)</h2>
     <textarea id="raw-goesrecv" spellcheck="false"></textarea>
-    <div class="row" style="margin-top:10px"><button class="b" data-raw="goesrecv">Save</button></div>
+    <div class="row mt10"><button class="b" data-raw="goesrecv">Save</button></div>
   </div>
   <div class="card">
     <h2>goesproc.conf (raw)</h2>
     <textarea id="raw-goesproc" spellcheck="false"></textarea>
-    <div class="row" style="margin-top:10px"><button class="b" data-raw="goesproc">Save</button></div>
+    <div class="row mt10"><button class="b" data-raw="goesproc">Save</button></div>
     <p class="msg">Saves are checked for valid TOML and the previous file is kept as <code>.bak</code>.</p>
   </div>
 </section>
 
 <section id="globe">
   <div class="card row">
-    <select id="globe-region" style="width:auto">
+    <select class="w-auto" id="globe-region">
       <option value="northeast">Northeast US</option>
       <option value="eastus">East Coast US</option>
       <option value="stratford">Stratford &amp; Long Island Sound</option>
@@ -314,7 +324,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
         <option value="fog_samer">Fog: South America</option>
       </optgroup>
     </select>
-    <select id="globe-range" style="width:auto">
+    <select class="w-auto" id="globe-range">
       <option value="1">Last hour</option>
       <option value="6">Last 6 hours</option>
       <option value="24">Last 24 hours</option>
@@ -346,11 +356,11 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 
 <section id="gallery">
   <div class="card row">
-    <select id="gal-region" style="width:auto"><option value="">All regions</option></select>
-    <span class="msg" id="gal-count" style="margin-left:auto"></span>
+    <select class="w-auto" id="gal-region"><option value="">All regions</option></select>
+    <span class="msg ml-auto" id="gal-count"></span>
   </div>
   <div id="gal"></div>
-  <div class="row" style="margin-top:14px"><button class="b ghost" id="gal-more" style="display:none">Load more</button></div>
+  <div class="row mt14"><button class="b ghost" id="gal-more" style="display:none">Load more</button></div>
   <p class="msg">Times are shown in your local time zone; the UTC time is in the tooltip. Newest first.</p>
 </section>
 
@@ -358,12 +368,12 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card">
     <div class="row">
       <div class="crumbs" id="crumbs"></div>
-      <span class="msg" id="storage" style="margin-left:auto"></span>
+      <span class="msg ml-auto" id="storage"></span>
     </div>
   </div>
   <div id="dirs"></div>
   <div class="files" id="files"></div>
-  <div class="row" style="margin-top:14px"><a class="b ghost" id="zip" href="#" target="_blank" rel="noopener">Download this folder (zip)</a><span class="msg" id="zip-note" style="display:none">Folder zip download is only available in the Safari browser, not the Home Screen app.</span></div>
+  <div class="row mt14"><a class="b ghost" id="zip" href="#" target="_blank" rel="noopener">Download this folder (zip)</a><span class="msg" id="zip-note" style="display:none">Folder zip download is only available in the Safari browser, not the Home Screen app.</span></div>
 </section>
 
 <section id="forecast">
@@ -381,29 +391,29 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card" id="pf-card" style="display:none">
     <h2 id="pf-title">Forecast for Bridgeport</h2>
     <canvas id="pf-temp"></canvas>
-    <canvas id="pf-wind" style="height:110px;margin-top:6px"></canvas>
-    <div id="pf-table" style="margin-top:8px"></div>
+    <canvas class="spark" id="pf-wind"></canvas>
+    <div class="mt8" id="pf-table"></div>
     <p class="msg" id="pf-note"></p>
   </div>
   <div class="card" id="wh-card">
-    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Recent weather at Bridgeport airport</h2>
-      <select id="wh-hours" style="width:auto"><option value="24">24 h</option><option value="72" selected>3 days</option><option value="168">7 days</option><option value="336">14 days</option></select></div>
+    <div class="row" style="justify-content:space-between"><h2 class="m0">Recent weather at Bridgeport airport</h2>
+      <select class="w-auto" id="wh-hours"><option value="24">24 h</option><option value="72" selected>3 days</option><option value="168">7 days</option><option value="336">14 days</option></select></div>
     <p class="msg" id="wh-tend"></p>
     <canvas id="wh-temp"></canvas>
-    <canvas id="wh-press" style="height:110px;margin-top:6px"></canvas>
-    <canvas id="wh-wind" style="height:110px;margin-top:6px"></canvas>
+    <canvas class="spark" id="wh-press"></canvas>
+    <canvas class="spark" id="wh-wind"></canvas>
   </div>
   <div class="card">
     <div class="row">
-      <select id="wx-cat" style="width:auto"><option value="">All products</option></select>
-      <select id="wx-office" style="width:auto"><option value="">All offices</option></select>
-      <select id="wx-hours" style="width:auto"><option value="6">6 h</option><option value="24">24 h</option><option value="48" selected>48 h</option><option value="72">72 h</option></select>
+      <select class="w-auto" id="wx-cat"><option value="">All products</option></select>
+      <select class="w-auto" id="wx-office"><option value="">All offices</option></select>
+      <select class="w-auto" id="wx-hours"><option value="6">6 h</option><option value="24">24 h</option><option value="48" selected>48 h</option><option value="72">72 h</option></select>
     </div>
-    <div class="row" style="margin-top:8px">
+    <div class="row mt8">
       <input id="wx-q" placeholder="Search text, e.g. fog, Montauk" style="flex:1;min-width:140px">
       <button class="b" id="wx-go">Search</button>
     </div>
-    <div class="row" style="margin-top:8px">
+    <div class="row mt8">
       <button class="b ghost" id="wx-mine">My area</button>
       <button class="b ghost" id="wx-warn">Warnings &amp; statements</button>
       <button class="b ghost" id="wx-afd">Forecast discussions</button>
@@ -428,11 +438,11 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card">
     <h2>Which alerts reach your phone</h2>
     <div id="nt-list"></div>
-    <div class="row" style="margin-top:12px">
-      <label class="msg" style="margin:0">Daily health summary at <input type="time" id="nt-health" style="width:auto"></label>
-      <label class="msg" style="margin:0">Daily best image at <input type="time" id="nt-image" style="width:auto"></label>
+    <div class="row mt12">
+      <label class="msg m0">Daily health summary at <input class="w-auto" type="time" id="nt-health"></label>
+      <label class="msg m0">Daily best image at <input class="w-auto" type="time" id="nt-image"></label>
     </div>
-    <div class="row" style="margin-top:12px">
+    <div class="row mt12">
       <button class="b" id="nt-save">Save</button>
       <button class="b ghost" id="nt-test">Send test notification</button>
     </div>
@@ -445,12 +455,12 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card">
     <div class="row">
       <select id="ch-sel" style="width:auto;max-width:100%"></select>
-      <select id="ch-n" style="width:auto"><option value="1">Latest only</option><option value="8">Loop 8</option><option value="16" selected>Loop 16</option><option value="30">Loop 30</option></select>
+      <select class="w-auto" id="ch-n"><option value="1">Latest only</option><option value="8">Loop 8</option><option value="16" selected>Loop 16</option><option value="30">Loop 30</option></select>
       <button class="b ghost" id="ch-play">Pause</button>
     </div>
     <p class="msg" id="ch-msg"></p>
     <img id="ch-img" alt="" style="width:100%;border-radius:8px;background:var(--bg)">
-    <input type="range" id="ch-slider" min="0" max="0" value="0" style="margin-top:10px">
+    <input class="mt10" type="range" id="ch-slider" min="0" max="0" value="0">
     <p class="msg">NWS graphics as received over the satellite. The feed repeats old products, so the time shown is when each image was issued, not when it arrived.</p>
   </div>
 </section>
@@ -460,17 +470,17 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <h2>Morning briefing email</h2>
     <p class="mstat" id="m-from"></p>
     <p class="mstat" id="m-next"></p>
-    <div class="row" style="margin-top:10px">
-      <label for="m-time" style="margin:0">Send time (US Eastern)</label>
-      <input type="time" id="m-time" style="width:auto">
+    <div class="row mt10">
+      <label class="m0" for="m-time">Send time (US Eastern)</label>
+      <input class="w-auto" type="time" id="m-time">
       <button class="b" id="m-time-save">Save</button>
     </div>
   </div>
   <div class="card">
     <h2>Recipients</h2>
     <div id="m-list"></div>
-    <div class="row" style="margin-top:10px">
-      <input type="email" id="m-add" placeholder="name@example.com" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+    <div class="row mt10">
+      <input class="grow12" type="email" id="m-add" placeholder="name@example.com" autocapitalize="none" autocomplete="off">
       <button class="b" id="m-add-btn">Add</button>
     </div>
     <p class="msg" id="m-msg"></p>
@@ -480,9 +490,9 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <h2>Public share links</h2>
     <p class="msg" id="sh-info"></p>
     <div id="sh-list"></div>
-    <div class="row" style="margin-top:10px">
+    <div class="row mt10">
       <input type="text" id="sh-name" placeholder="Name (e.g. Mom)" maxlength="60" style="flex:1;min-width:9em">
-      <input type="email" id="sh-email" placeholder="Their email (optional)" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+      <input class="grow12" type="email" id="sh-email" placeholder="Their email (optional)" autocapitalize="none" autocomplete="off">
       <button class="b" id="sh-add">Add link</button>
     </div>
     <p class="msg" id="sh-msg"></p>
@@ -492,21 +502,13 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <h2>Phone push notifications</h2>
     <p class="msg">Alerts (signal lost, restarts, weather warnings, skipped briefing) can also be pushed to your phone with the free ntfy app. Install ntfy, subscribe to a topic name that is hard to guess, and enter the same name here. Anyone who knows the topic could read the alerts, so make it long and random. Alert text passes through ntfy.sh.</p>
     <div class="row">
-      <input type="text" id="pt-topic" placeholder="e.g. goes-k3x9q7m2vz" autocapitalize="none" autocomplete="off" style="flex:1;min-width:12em">
+      <input class="grow12" type="text" id="pt-topic" placeholder="e.g. goes-k3x9q7m2vz" autocapitalize="none" autocomplete="off">
       <button class="b" id="pt-save">Save</button>
       <button class="b ghost" id="pt-gen">Make one</button>
       <button class="b ghost" id="pt-test">Send test push</button>
     </div>
     <p class="msg" id="pt-msg"></p>
   </div>
-</section>
-
-<section id="logs">
-  <div class="card row">
-    <select id="log-name" style="width:auto"><option>goesrecv</option><option>goesproc</option></select>
-    <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="log-quiet" style="width:auto"> hide stat lines</label>
-  </div>
-  <pre id="log-out"></pre>
 </section>
 
 </main>
@@ -516,7 +518,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div id="lbm-list"></div>
   <input type="email" id="lbm-other" placeholder="Another address (optional)" autocapitalize="none" autocomplete="off" style="width:100%;margin-top:8px">
   <input type="text" id="lbm-note" placeholder="Add a note (optional)" maxlength="500" style="width:100%;margin-top:8px">
-  <div class="row" style="margin-top:12px"><button class="b go" id="lbm-send">Send</button><button class="b ghost" id="lbm-cancel">Cancel</button></div>
+  <div class="row mt12"><button class="b go" id="lbm-send">Send</button><button class="b ghost" id="lbm-cancel">Cancel</button></div>
   <p class="msg" id="lbm-msg"></p>
 </div>
 <pre id="lb-txt"></pre><span class="msg" id="lb-hint">Tap the image to zoom. Tap Close to return.</span></div>
@@ -530,8 +532,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-// Everyday tabs sit in the bar; the admin ones are in the More menu. Logs is hidden (its section and code are kept:
-// add ['logs','Logs'] to MORE to bring the tab back).
+// Everyday tabs sit in the bar; the admin ones are in the More menu.
 const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['skywarn','Skywarn'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
 const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
 TABS.forEach(([id, name]) => {
@@ -583,7 +584,7 @@ function show(id) {
 }
 let startTab = 'aim';
 try { startTab = localStorage.tab || 'aim'; } catch {}
-if (![...TABS, ...MORE].some(([k]) => k === startTab)) startTab = 'aim';     // e.g. a remembered, now hidden, Logs tab
+if (![...TABS, ...MORE].some(([k]) => k === startTab)) startTab = 'aim';     // e.g. a remembered tab that no longer exists
 
 // ---- status
 let status = {};
@@ -671,7 +672,7 @@ const f = (v, d=0) => v == null ? '–' : v.toFixed(d);
 function render() {
   const last = hist[hist.length - 1];
   const age = last ? Date.now()/1000 - last.t : null;
-  const live = last && age < 4 && status.goesrecv && status.goesrecv.running;
+  const live = last && age < 6 && status.goesrecv && status.goesrecv.running;
   const b = $('#banner');
   if (!live) {
     b.className = 'banner'; b.innerHTML = 'No data<small>Start goesrecv to begin</small>';
@@ -1626,21 +1627,15 @@ $('#ch-play').onclick = () => {
 };
 
 // ---- logs
-async function pollLog() {
-  if (!$('#logs').classList.contains('active')) return;
-  const r = await api(`/api/log?name=${$('#log-name').value}${$('#log-quiet').checked ? '&quiet=1' : ''}`);
-  const out = $('#log-out'), atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
-  out.textContent = r.lines.join('\n');
-  if (atEnd) out.scrollTop = out.scrollHeight;
-}
-
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
   $('#zip').style.display = 'none'; $('#zip-note').style.display = '';
 }
 show(startTab);
-pollStatus(); setInterval(pollStatus, 3000);
-setInterval(pollStats, 1000);
-setInterval(pollLog, 2000);
+// background polls pause while the page is hidden and catch up when it comes back
+const whenVisible = fn => () => { if (!document.hidden) fn(); };
+pollStatus(); setInterval(whenVisible(pollStatus), 3000);
+setInterval(whenVisible(pollStats), 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollStatus(); pollStats(); } });
 </script>
 </body>
 </html>

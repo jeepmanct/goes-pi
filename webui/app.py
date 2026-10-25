@@ -4,6 +4,7 @@ config editing and image browsing. Standard library only (Pillow optional,
 used for thumbnails)."""
 
 import datetime
+import gzip
 import hashlib
 import base64
 import collections
@@ -33,6 +34,10 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+GZIP_SUFFIXES = {".html", ".css", ".js", ".json", ".svg"}
+_gz_cache = {}          # path -> (mtime_ns, gzipped bytes)
+
 
 def _load(name):
     """Load a sibling module by path (the service runs python -I, which drops the script dir from sys.path)."""
@@ -733,10 +738,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Strict-Transport-Security", "max-age=31536000")
         super().end_headers()
 
+    def wants_gzip(self):
+        return "gzip" in self.headers.get("Accept-Encoding", "")
+
     def send_json(self, obj, code=200):
         body = json.dumps(obj).encode()
+        gz = len(body) > 1024 and self.wants_gzip()
+        if gz:
+            body = gzip.compress(body, 4)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -744,6 +757,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_file(self, path, download=False):
         ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        if path.parent == STATIC and path.suffix in GZIP_SUFFIXES and not download and "Range" not in self.headers and self.wants_gzip():
+            st = path.stat()
+            hit = _gz_cache.get(path)
+            if not hit or hit[0] != st.st_mtime_ns:
+                hit = _gz_cache[path] = (st.st_mtime_ns, gzip.compress(path.read_bytes(), 6))
+            self.send_response(200)
+            self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(hit[1])))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(hit[1])
+            return
         size = path.stat().st_size
         start, end, code = 0, size - 1, 200
         m = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))   # iOS needs this for video
