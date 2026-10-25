@@ -814,6 +814,29 @@ def _bestimage_loop():
         time.sleep(1800)
 
 
+def _backup_loop():
+    """Weekly copy of the git-ignored state files to the big drive (Sundays after 03:30 US Eastern, retried hourly)."""
+    import importlib.util
+    from zoneinfo import ZoneInfo
+    time.sleep(1200)
+    while True:
+        try:
+            now = dt.datetime.now(ZoneInfo("America/New_York"))
+            spec = importlib.util.spec_from_file_location("goes_backup", GOES_DIR / "backup_state.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            newest = max((p.stat().st_mtime for p in mod.DEST.glob("state-*.tar.gz")), default=0)
+            if (now.weekday() == 6 and (now.hour, now.minute) >= (3, 30) and time.time() - newest > 5 * 86400) \
+                    or time.time() - newest > 9 * 86400:                  # also catches up if a week was missed
+                out, n = mod.make()
+                print(f"state backup written: {out.name} ({n} files)", flush=True)
+        except Exception as e:
+            print("backup error:", e, flush=True)
+            push_only("GOES: backup failed", f"The weekly state backup did not complete: {e}", key="backup-fail", every=24 * 3600,
+                      priority="high", tags="warning")
+        time.sleep(3600)
+
+
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ()), (_backup_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()

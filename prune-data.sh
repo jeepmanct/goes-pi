@@ -31,7 +31,7 @@ fi
 
 used=$(du -sb "$DATA" | cut -f1)
 if [ "$used" -ge "$TRIGGER" ]; then
-  find "$DATA" -type f -printf '%T@ %s %p\n' | sort -n | while read -r _ size path; do
+  find "$DATA" -path "$DATA/backup" -prune -o -type f -printf '%T@ %s %p\n' | sort -n | while read -r _ size path; do   # never the state backups
     [ "$used" -lt "$TRIGGER" ] && break
     rm -f -- "$path" && used=$((used - size))
   done

@@ -275,6 +275,9 @@ def safe_path(rel):
     p = (base / rel.lstrip("/")).resolve()
     if p != base and base not in p.parents:
         raise PermissionError("path outside data directory")
+    hidden = base / "backup"          # state backups (passwords, mail settings) are never served through the panel
+    if p == hidden or hidden in p.parents:
+        raise PermissionError("not available")
     return p
 
 
@@ -282,6 +285,8 @@ def list_dir(rel):
     p = safe_path(rel)
     dirs, files = [], []
     for e in sorted(p.iterdir(), key=lambda e: e.name, reverse=True):
+        if e.name == "backup" and p == DATA_DIR.resolve():
+            continue
         st = e.stat()
         item = {"name": e.name, "mtime": st.st_mtime,
                 "path": str(e.relative_to(DATA_DIR.resolve()))}
@@ -903,8 +908,9 @@ class Handler(BaseHTTPRequestHandler):
             raise FileNotFoundError(rel)
         with tempfile.TemporaryFile() as tmp:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+                hidden = DATA_DIR.resolve() / "backup"
                 for f in d.rglob("*"):
-                    if f.is_file():
+                    if f.is_file() and hidden not in f.parents:
                         z.write(f, f.relative_to(d))
             size = tmp.tell()
             tmp.seek(0)
