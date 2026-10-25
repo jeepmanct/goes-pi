@@ -32,3 +32,13 @@ notify-log.jsonl
 notify-settings.json
 disk-history.jsonl
 .storm-clips.json
+radar-history.jsonl
+forecast-log.jsonl
+verification.jsonl
+sst-validation.jsonl
+sst-bias.json
+dish-daily.json
+insights-scan.jsonl
+insights.json
+views.py.bak*
+webui/local.py.bak*

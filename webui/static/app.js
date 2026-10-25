@@ -8,7 +8,7 @@ const api = async (path, body) => {
 // ---- tabs
 // Everyday tabs sit in the bar; the admin ones are in the More menu.
 const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['skywarn','Skywarn'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
-const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
+const MORE = [['insights','Insights'],['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -55,6 +55,7 @@ function show(id) {
   if (id === 'charts') loadCharts();
   if (id === 'signal') loadSignal();
   if (id === 'pi') loadPi();
+  if (id === 'insights') loadInsights();
 }
 let startTab = 'aim';
 try { startTab = localStorage.tab || 'aim'; } catch {}
@@ -278,7 +279,7 @@ let cmpOn = false, cmpFrames = [], cmpLoadId = 0;
 const CMP_PAIR = {northeast: 'ct_northeast', eastus: 'wv_eastus', gulf: 'ct_gulf', namer: 'wv_namer', globe: 'wv_globe', stratford: 'ct_stratford', ct_stratford: 'stratford', fog_stratford: 'stratford', nyc: 'northeast',
   samer: 'globe', ct_northeast: 'northeast', ct_eastus: 'eastus', ct_gulf: 'gulf', ct_namer: 'namer', ct_globe: 'globe',
   wv_eastus: 'eastus', wv_namer: 'namer', wv_globe: 'globe', wv_gulf: 'gulf', fog_northeast: 'northeast', fog_eastus: 'eastus',
-  fog_nyc: 'nyc', fog_namer: 'namer', fog_gulf: 'gulf', fog_samer: 'samer', storm: 'northeast'};
+  fog_nyc: 'nyc', fog_namer: 'namer', fog_gulf: 'gulf', fog_samer: 'samer', storm: 'northeast', sst_stratford: 'stratford', sst_eastus: 'eastus', rad_stratford: 'ct_stratford', rad_northeast: 'ct_northeast'};
 function cmpSplit() {
   const v = +$('#cmp-pos').value;
   $('#cmp-img').style.clipPath = `inset(0 0 0 ${v}%)`;
@@ -1110,3 +1111,67 @@ const whenVisible = fn => () => { if (!document.hidden) fn(); };
 pollStatus(); setInterval(whenVisible(pollStatus), 3000);
 setInterval(whenVisible(pollStats), 2000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollStatus(); pollStats(); } });
+
+// ---- insights: numbers worked out from the satellite, radar, forecasts and signal log
+const insT = (rows, head) => '<table style="width:100%;border-collapse:collapse;font-size:14px"><tr style="color:var(--muted);text-align:left">' +
+  head.map((h, i) => `<th style="padding:2px 8px 2px 0;${i ? 'text-align:right' : ''}">${h}</th>`).join('') + '</tr>' +
+  rows.map(r => '<tr>' + r.map((c, i) => `<td style="padding:2px 8px 2px 0;${i ? 'text-align:right' : ''}">${c == null ? '–' : c}</td>`).join('') + '</tr>').join('') + '</table>';
+const insBars = (items, max, fmt) => items.map(([l, v]) => `<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:13px"><span style="width:70px;color:var(--muted)">${l}</span>` +
+  `<span style="flex:1;background:var(--bg);border-radius:4px;height:10px"><span style="display:block;height:10px;border-radius:4px;background:var(--accent);width:${Math.max(1, Math.min(100, 100 * v / max))}%"></span></span><span style="width:60px;text-align:right">${fmt(v)}</span></div>`).join('');
+const insAgo = iso => { const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 90 ? m + ' min ago' : Math.round(m / 60) + ' h ago'; };
+const insImg = (p, cap) => p ? `<a href="/file/${p}" target="_self"><img src="/thumb/${p}?w=720" style="width:100%;border-radius:8px;display:block" loading="lazy"></a><div class="msg">${cap}</div>` : '<p class="msg">No picture yet.</p>';
+async function loadInsights() {
+  let d; try { d = await api('/api/insights'); } catch { return; }
+  if (!d.updated) { $('#ins-note').textContent = 'Nothing yet. The first numbers appear within 15 minutes.'; return; }
+  $('#ins-note').textContent = 'Updated ' + insAgo(d.updated) + '. Everything here comes from data this Pi already receives.';
+  const c = [], im = d.images || {};
+  const s = d.sst || {}, r = d.radar || {}, cl = d.clouds || {}, f = d.forecast || {}, di = d.dish || {};
+  // water temperature
+  let h = '<div class="card"><h2>Water temperature (from the satellite)</h2>';
+  if (s.latest) h += `<div class="grid"><div class="metric"><div class="l">Long Island Sound</div><div class="v">${s.latest.sound_f.toFixed(0)} °F</div><div class="s">${s.sound_24h ? 'last 24 h: ' + s.sound_24h.min.toFixed(0) + '–' + s.sound_24h.max.toFixed(0) + ' °F' : ''}</div></div>` +
+    Object.entries(s.latest.points || {}).map(([k, v]) => `<div class="metric"><div class="l">${k}</div><div class="v">${v.toFixed(0)} °F</div></div>`).join('') + '</div>';
+  h += insImg(im.sst_stratford, 'Clear-sky surface temperature; gray is cloud. Coastal pixels mix land and water, so trust open water most. Full set in Views.');
+  h += `<p class="msg">Checked against NWS water temperatures at the Jersey shore: ${s.pairs ? s.pairs + ' comparisons over ' + s.days + ' day(s), average error ' + (s.mean_error_f > 0 ? '+' : '') + s.mean_error_f + ' °F' : 'none yet'}. ` +
+    (s.calibrated ? 'Calibration offset applied: ' + (s.offset_k > 0 ? '+' : '') + s.offset_k + ' K.' : 'Calibration starts after 8 comparisons over 3 days. Expect about ±3 °F.') + '</p></div>';
+  c.push(h);
+  // radar
+  h = '<div class="card"><h2>Radar near Stratford</h2><div class="grid">';
+  const lt = r.latest;
+  h += `<div class="metric"><div class="l">Right now</div><div class="v">${lt && lt.max25 != null ? lt.max25.toFixed(0) + ' dBZ' : 'Dry'}</div><div class="s">${lt && lt.max25 != null ? 'strongest echo within 25 km' : 'no echo within 25 km'}</div></div>` +
+    `<div class="metric"><div class="l">Last 24 hours</div><div class="v">${r.wet_frames_24h ? r.max_dbz_24h.toFixed(0) + ' dBZ' : 'Dry'}</div><div class="s">${r.wet_frames_24h ? r.wet_frames_24h + ' of ' + r.frames_24h + ' radar frames showed rain' : r.frames_24h + ' radar frames, no rain'}</div></div></div>`;
+  h += insImg(im.rad_stratford, 'NWS radar over the satellite infrared picture. Radar comes from the EMWIN feed; no internet needed.') + '</div>';
+  c.push(h);
+  // clouds
+  h = '<div class="card"><h2>Cloud cover over Stratford</h2>';
+  if (cl.scans) {
+    h += `<div class="grid"><div class="metric"><div class="l">Now</div><div class="v">${cl.latest.cloud}%</div><div class="s">${insAgo(cl.latest.t)}</div></div>` +
+      `<div class="metric"><div class="l">Average</div><div class="v">${cl.mean_cloud}%</div><div class="s">${cl.days.length} day(s), ${cl.clear_days} clear, ${cl.cloudy_days} cloudy</div></div>` +
+      `<div class="metric"><div class="l">Agrees with airport</div><div class="v">${cl.agreement.pct == null ? '–' : cl.agreement.pct + '%'}</div><div class="s">${cl.agreement.n} comparisons with KBDR</div></div></div>`;
+    h += '<h2 style="margin-top:12px">By day</h2>' + insBars(cl.days.slice(-14).map(x => [x.date.slice(5), x.cloud]), 100, v => v + '%');
+    h += '<h2 style="margin-top:12px">By hour of day (local)</h2>' + insBars(cl.by_hour.map(x => [x.hour + ':00', x.cloud]), 100, v => v + '%');
+    h += '<p class="msg">The satellite also sees high thin cloud that the airport sensor cannot, so some disagreement is normal. History began ' + new Date(cl.first).toLocaleDateString() + '.</p>';
+  } else h += '<p class="msg">Collecting.</p>';
+  c.push(h + '</div>');
+  // forecast
+  h = '<div class="card"><h2>How good is the forecast?</h2>';
+  if (f.buckets && f.buckets.length) {
+    h += (f.headline ? `<p style="margin:0 0 8px">Temperature forecasts for the next 24 hours have been off by <b>${f.headline.temp_mae_f} °F</b> on average (${f.headline.n} checks this week).</p>` : '') +
+      insT(f.buckets.map(b => [b.label, b.n, b.temp_mae, b.temp_bias, b.persistence_mae, b.wind_mae, b.sky_mae == null ? null : b.sky_mae + '%']),
+        ['Looking ahead', 'Checks', 'Temp error °F', 'Temp bias °F', '"Same as now" °F', 'Wind error mph', 'Cloud error']);
+    h += `<p class="msg">Each point forecast is saved when NWS Upton issues it and compared with the Bridgeport airport report at the time it was meant for. "Same as now" is the error you would get by assuming the temperature never changes. ${f.scored} checks from ${f.issued} forecasts.` +
+      (f.pop && f.pop.rain_rate >= 5 ? ` Rain chances: ${f.pop.n} checks, score ${f.pop.brier} against ${f.pop.climatology_brier} for always guessing the average (lower is better).` : '') + '</p>';
+  } else h += '<p class="msg">Collecting.</p>';
+  c.push(h + '</div>');
+  // dish
+  h = '<div class="card"><h2>Dish signal vs weather and sun</h2>';
+  if (di.categories && di.categories.length) {
+    h += `<p class="msg" style="margin-top:0">${di.minutes} minutes over ${di.days} day(s). Viterbi errors: lower is better.</p>` +
+      insT(di.categories.map(x => [x.name, x.minutes, x.vit, x.delta == null ? null : (x.delta > 0 ? '+' : '') + x.delta, x.locked_pct + '%']), ['Weather', 'Minutes', 'Errors', 'vs clear', 'Locked']);
+    if (di.categories.length < 2) h += '<p class="msg">Only clear weather so far. Rain, snow and cloudy days will fill in the comparison.</p>';
+    h += '<h2 style="margin-top:12px">Sun near the dish</h2>' + insT(di.sun.map(x => [x.name, x.minutes, x.vit, x.locked_pct + '%']), ['Sun from dish axis', 'Minutes', 'Errors', 'Locked']);
+    h += '<p class="msg">The sun is a strong radio noise source. If errors rise when it is within a few degrees of the dish axis, that is the cause, not the weather.</p>';
+  } else h += '<p class="msg">Collecting.</p>';
+  c.push(h + '</div>');
+  $('#ins-body').innerHTML = c.join('');
+}
+setInterval(() => { if ($('#insights').classList.contains('active') && !document.hidden) loadInsights(); }, 120000);

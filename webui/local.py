@@ -310,11 +310,11 @@ def _slots(line, label, n, first=13, width=3):
     return out
 
 
-def point_forecast(zone=None):
+def point_forecast(zone=None, rows=None, keep_past=False):
     """3-hourly (then 6-hourly) forecast for the home point from the PFM bulletin: list of dicts with t, temp, dew,
     wind_dir, wind_mph, sky, pop, plus the point's name and issue time. None if no bulletin."""
     zone = zone or HOME["zone"]
-    for r in _newest("PFM", HOME["office"], n=6, hours=30):
+    for r in (rows if rows is not None else _newest("PFM", HOME["office"], n=6, hours=30)):
         try:
             text = _text(r["name"])
         except OSError:
@@ -358,7 +358,8 @@ def point_forecast(zone=None):
                                "sky": SKY_PFM.get(sky[i], sky[i]) if sky else None,
                                "pop": int(pops[i]) if i in pops and pops[i].isdigit() else None, "step_h": step // 3600})
         if points:
-            points = [pt for pt in points if pt["t"] >= time.time() - 3 * 3600]
+            if not keep_past:
+                points = [pt for pt in points if pt["t"] >= time.time() - 3 * 3600]
             seen, uniq = set(), []
             for pt in sorted(points, key=lambda x: x["t"]):
                 if pt["t"] not in seen:

@@ -25,6 +25,11 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 Image.MAX_IMAGE_PIXELS = None
 
+import importlib.util
+_sp = importlib.util.spec_from_file_location("surface", Path("/home/pi/goes/surface.py"))
+surface = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(surface)       # surface temperature and radar helpers (python -I has no script dir on the path)
+
 DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
@@ -151,6 +156,18 @@ REGIONS.update({
     "ct_globe":  _ct("globe", "Cloud tops, full disk", "CT_FD_GLOBE"),
     "ct_stratford": _ct("stratford", "Cloud tops, Stratford and the Sound", "CT_STRATFORD_LIS"),
 })
+REGIONS.update({
+    "sst_stratford": dict(REGIONS["stratford"], name="SURFACE_TEMP_STRATFORD_LIS", label="Surface temperature, Stratford and the Sound",
+                          sst=True, geo="stratford", sun=False),
+    "sst_eastus": dict(REGIONS["eastus"], name="SURFACE_TEMP_EAST_US", label="Surface temperature, East Coast US",
+                       sst=True, geo="eastus", sun=False),
+    "rad_stratford": dict(REGIONS["stratford"], name="RADAR_STRATFORD_LIS", label="Radar over clouds, Stratford and the Sound",
+                          radar=True, geo="stratford", sun=False),
+    "rad_northeast": dict(REGIONS["northeast"], name="RADAR_NORTHEAST_US", label="Radar over clouds, Northeast US",
+                          radar=True, geo="northeast", sun=False),
+})
+SCAN_LOG = Path("/home/pi/goes/insights-scan.jsonl")   # one line per surface-temperature render, read by insights.py
+RADAR_AGE = dt.timedelta(minutes=20)
 FOG_AGE = dt.timedelta(minutes=35)   # channels are staggered by ~30 min in the broadcast; fog moves slowly
 
 OUTLINE = dict(stroke_width=2, stroke_fill=(0, 0, 0, 200))
@@ -666,10 +683,133 @@ def has_night(spec, t):
     return float((cosz < 0.05).mean()) > 0.03
 
 
+# ---- surface temperature and radar views ----------------------------------------------------------------------
+
+_RADAR = {}
+
+
+def sst_inputs(files, t):
+    """{'13': path, '15': path} close enough in time to pair, or None."""
+    got = {}
+    for c in ("13", "15"):
+        p = nearest(files, c, t, FOG_AGE)
+        if not p or bt_table(p) is None:
+            return None
+        got[c] = p
+    return got
+
+
+def radar_near(t):
+    """(time, path) of the radar mosaic closest to scan time t, or None if none within RADAR_AGE."""
+    if "files" not in _RADAR:
+        _RADAR["files"] = surface.radar_files()
+    best = min(_RADAR["files"], key=lambda tp: abs(tp[0] - t), default=None)
+    return best if best and abs(best[0] - t) <= RADAR_AGE else None
+
+
+def cos_zenith(geo, t):
+    slat, slon = subsolar(t)
+    return np.where(geo["disc"], geo["sinlat"] * math.sin(slat) + geo["coslat"] * math.cos(slat) * (
+        geo["coslon"] * math.cos(slon) + geo["sinlon"] * math.sin(slon)), -1)
+
+
+def latlon_deg(geo):
+    return np.degrees(np.arcsin(geo["sinlat"])), np.degrees(np.arctan2(geo["sinlon"], geo["coslon"]))
+
+
+def ir_gray(t13):
+    """Cold = bright, so clouds stand out; used under colour overlays."""
+    return np.clip((300.0 - t13) / 100.0, 0, 1) * 0.85 + 0.08
+
+
+def render_sst(key, spec, files, t, box, geo):
+    f = spec["f"]
+    fi = sst_inputs(files, t)
+    t13 = window_bt(load_full(fi["13"]), bt_table(fi["13"]), box, f)
+    t15 = window_bt(load_full(fi["15"]), bt_table(fi["15"]), box, f)
+    p7, p2 = nearest(files, "07", t, FOG_AGE), nearest(files, "02", t)
+    t07 = window_bt(load_full(p7), bt_table(p7), box, f) if p7 and bt_table(p7) is not None else None
+    refl = window(load_full(p2), box, f) if p2 else None
+    raw, clear = surface.skin_temp(t13, t15, t07, refl, cos_zenith(geo, t), geo["land"])
+    off = surface.offset_k()
+    rgb = np.where(clear[..., None], surface.temp_rgb(raw + off), ir_gray(t13)[..., None])
+    rgb = np.where(geo["disc"][..., None], rgb, 0.0)
+    stats = sst_stats(key, spec, t, raw, clear, geo, off)
+    mode = "clear-sky surface temperature (F), gray = cloud"
+    if stats.get("sound_f") is not None:
+        mode += f"  ·  Sound about {stats['sound_f'] + off * 1.8:.0f} F"
+    return rgb, mode
+
+
+def sst_stats(key, spec, t, raw, clear, geo, off):
+    """Raw (uncalibrated) temperatures at the checkpoints plus cloud cover near home; one line to SCAN_LOG."""
+    lat, lon = latlon_deg(geo)
+    water = geo["land"] < 0.3
+    rec = {"t": t.isoformat(), "view": key, "offset_k": round(off, 2), "points": {}}
+
+    def zone(la0, la1, lo0, lo1, need_water=True):
+        m = (lat >= la0) & (lat <= la1) & (lon >= lo0) & (lon <= lo1) & geo["disc"]
+        return m & water if need_water else m
+
+    for name, (la, lo) in surface.SST_POINTS.items():
+        km = 12.0 / 111.0
+        m = ((lat - la) ** 2 + ((lon - lo) * math.cos(math.radians(la))) ** 2 < km ** 2) & water & clear
+        if m.sum() >= 3:
+            rec["points"][name] = round(float(surface.k_to_f(np.median(raw[m]))), 2)
+    home = ((lat - HOME[0]) ** 2 + ((lon - HOME[1]) * math.cos(math.radians(HOME[0]))) ** 2) < (25.0 / 111.0) ** 2
+    if home.sum() >= 20:
+        rec["clear_home"] = round(float(clear[home].mean()), 3)
+    m = zone(40.95, 41.3, -73.7, -72.0) & clear
+    if m.sum() >= 10:
+        rec["sound_f"] = round(float(surface.k_to_f(np.median(raw[m]))), 2)
+        rec["sound_clear"] = round(float(m.sum() / max(1, zone(40.95, 41.3, -73.7, -72.0).sum())), 3)
+    try:
+        with SCAN_LOG.open("a") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except OSError:
+        pass
+    return rec
+
+
+def render_radar(key, spec, files, t, box, geo):
+    f = spec["f"]
+    rt, rpath = radar_near(t)
+    p13 = nearest(files, "13", t)
+    t13 = window_bt(load_full(p13), bt_table(p13), box, f)
+    dbz = _RADAR.setdefault("dbz", {}).get(rpath)
+    if dbz is None:
+        _RADAR["dbz"] = {rpath: surface.radar_dbz(rpath)}
+        dbz = _RADAR["dbz"][rpath]
+    lat, lon = latlon_deg(geo)
+    g = surface.radar_on_grid(dbz, lat, lon)
+    base = np.repeat(ir_gray(t13)[..., None], 3, axis=2)
+    echo = ~np.isnan(g)
+    rgb = np.where(echo[..., None], 0.2 * base + 0.8 * surface.dbz_rgb(g), base)
+    rgb = np.where(geo["disc"][..., None], rgb, 0.0)
+    mode = f"NWS radar {rt:%H:%M}Z over infrared clouds: green = light rain, yellow/red = heavy"
+    return rgb, mode
+
+
+def draw_temp_legend(img):
+    d = ImageDraw.Draw(img)
+    fs, font = font_for(img.width)
+    w, h = max(160, img.width // 4), max(8, fs // 2 + 2)
+    x0, y0 = img.width - w - 14, img.height - h - 14 - fs
+    lo, hi = surface.RANGE_F
+    ramp = surface.temp_rgb(((np.linspace(lo, hi, w) - 32) * 5 / 9 + 273.15)[None, :])[0]
+    for i in range(w):
+        d.line([(x0 + i, y0), (x0 + i, y0 + h)], fill=tuple(int(c * 255) for c in ramp[i]))
+    d.rectangle([x0 - 1, y0 - 1, x0 + w, y0 + h], outline=(0, 0, 0))
+    for fv in (30, 45, 60, 75):
+        x = x0 + (fv - lo) / (hi - lo) * w
+        d.text((x - 8, y0 + h + 2), f"{fv}", fill=(230, 235, 245), font=font, **OUTLINE)
+    return img
+
+
 def build_scan(t, files, wanted):
     """Load the channels for scan time t once, then render every wanted view."""
     chans = {}
-    need_ir = [k for k in wanted if not REGIONS[k].get("bt")]
+    need_ir = [k for k in wanted if not REGIONS[k].get("bt") and not REGIONS[k].get("sst") and not REGIONS[k].get("radar")]
     for c in ("13", "02", "01", "03"):
         p = nearest(files, c, t) if need_ir else None
         if p:
@@ -688,13 +828,20 @@ def build_scan(t, files, wanted):
         spec = REGIONS[key]
         if spec.get("night") == "fog" and bt is None:
             continue
+        special = spec.get("sst") or spec.get("radar")
         if spec.get("bt") and spec["bt"][0] not in bts:
             continue
-        if not spec.get("bt") and "13" not in chans:
+        if not spec.get("bt") and not special and "13" not in chans:
             continue
         box = region_box(spec["bbox"], spec["f"])
         geo = geometry(key, spec, box)
-        if spec.get("bt"):
+        if special:
+            try:
+                rgb, mode = (render_sst if spec.get("sst") else render_radar)(key, spec, files, t, box, geo)
+            except Exception as e:                  # one broken product must not stop the others
+                print(f"{key}: {e!r}", flush=True)
+                continue
+        elif spec.get("bt"):
             ch, kind = spec["bt"]
             rgb = bt_rgb(window_bt(bts[ch][0], bts[ch][1], box, spec["f"]), geo["disc"], kind)
             mode = ("water vapor 6.2 um: white/blue = moist upper air, orange = dry" if kind == "wv" else
@@ -705,6 +852,8 @@ def build_scan(t, files, wanted):
         if spec["scale"] > 1:
             img = img.resize((img.width * spec["scale"], img.height * spec["scale"]), Image.LANCZOS)
         img = annotate(img, geo, spec, t, mode)
+        if spec.get("sst"):
+            img = draw_temp_legend(img)
         dest = out_path(key, spec, t)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(".tmp.jpg")
@@ -850,7 +999,9 @@ def main():
     for t, _p in reversed(files["13"]):
         todo = [k for k in a.views if (a.force or not out_path(k, REGIONS[k], t).exists())
                 and (REGIONS[k].get("night") != "fog" or (fog_inputs(files, t) and has_night(REGIONS[k], t)))
-                and (not REGIONS[k].get("bt") or nearest(files, REGIONS[k]["bt"][0], t))]
+                and (not REGIONS[k].get("bt") or nearest(files, REGIONS[k]["bt"][0], t))
+                and (not REGIONS[k].get("sst") or sst_inputs(files, t))
+                and (not REGIONS[k].get("radar") or (radar_near(t) and nearest(files, "13", t) and bt_table(nearest(files, "13", t)) is not None))]
         if not todo:
             continue
         build_scan(t, files, todo)

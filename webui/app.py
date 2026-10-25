@@ -928,6 +928,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(hit[1] or {"points": []})
             if u.path == "/api/weather/history":
                 return self.send_json(local.weather_history(min(max(int(q.get("hours", ["72"])[0]), 6), 336)))
+            if u.path == "/api/insights":
+                try:
+                    return self.send_json(json.loads((HOME / "goes" / "insights.json").read_text()))
+                except (OSError, ValueError):
+                    return self.send_json({})
             if u.path == "/api/local":
                 return self.send_json(local.summary())
             if u.path == "/api/mail":
