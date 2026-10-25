@@ -25,7 +25,10 @@ VIEWS = {  # name -> label
     "eastus": "East Coast", "namer": "North America", "gulf": "Gulf of Mexico",
     "samer": "South America", "globe": "Full disk globe",
     "wv_namer": "Water vapor, North America", "wv_globe": "Water vapor, full disk",
+    "ct_stratford": "Cloud tops, Stratford and the Sound", "ct_northeast": "Cloud tops, Northeast US",
+    "fog_stratford": "Stratford fog (night)", "meso1": "Mesoscale 1: 1-minute cloud tops (last 1-2 hours)",
 }
+MESO_MAX = 60       # mesoscale frames are about a minute apart, so the player only gets the newest few
 HOURS = 24          # Views player + GIF window
 GALLERY_HOURS = 72  # how far back the Gallery goes
 THUMBS = Path.home() / "goes" / "webui" / "thumbs" / "share"
@@ -244,6 +247,8 @@ two error-correcting codes (Viterbi and Reed-Solomon). A second program, <i>goes
 images and weather text files.</li>
 <li><b>Map making.</b> A script projects the satellite&rsquo;s view onto a map, draws coastlines and borders, and crops regional
 views such as New York and the Northeast. The &ldquo;fog&rdquo; view compares two infrared channels at night, where fog and low cloud show up in aqua.
+The &ldquo;cloud tops&rdquo; views colour the infrared channel by cloud-top temperature, so the coldest, highest storm tops stand out in red and magenta.
+The &ldquo;mesoscale&rdquo; view is a small box the satellite aims at active weather and refreshes about once a minute; its location changes as the weather moves.
 The colour pictures are synthesised from the visible and infrared channels, so greens and blues are an approximation, not a photo.</li>
 </ol>
 
@@ -460,10 +465,12 @@ class Handler(BaseHTTPRequestHandler):
                 opts = "".join(f'<option value="{k}">{v}</option>' for k, v in VIEWS.items())
                 page = PAGE.replace("%OPTS%", opts).replace("%BASE%", base).replace("%VJSON%", json.dumps(VIEWS)).replace("%HOW%", HOW).encode()
                 return self.reply(200, page, "text/html; charset=utf-8", {"Cache-Control": "no-cache"})
-            m = re.fullmatch(r"api/([a-z_]+)", rest)
+            m = re.fullmatch(r"api/([a-z0-9_]+)", rest)
             if m and m.group(1) in VIEWS:
                 cut = time.time() - HOURS * 3600
                 fr = [[round(t), p.name] for t, p in frames(m.group(1)) if t >= cut]
+                if m.group(1).startswith("meso"):
+                    fr = fr[-MESO_MAX:]
                 return self.reply(200, json.dumps({"frames": fr}).encode(), "application/json",
                                   {"Cache-Control": "max-age=30"})
             if rest == "api/gallery":
@@ -473,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
                 allf.sort(reverse=True)
                 return self.reply(200, json.dumps({"total": len(allf), "items": [[round(t), v, n] for t, v, n in allf[off:off + 48]]}).encode(),
                                   "application/json", {"Cache-Control": "max-age=30"})
-            m = re.fullmatch(r"(img|thumb)/([a-z_]+)/([A-Za-z0-9_.-]+\.jpg)", rest)
+            m = re.fullmatch(r"(img|thumb)/([a-z0-9_]+)/([A-Za-z0-9_.-]+\.jpg)", rest)
             if m and m.group(2) in VIEWS:
                 for _t, p in frames(m.group(2)):
                     if p.name == m.group(3):
@@ -482,7 +489,7 @@ class Handler(BaseHTTPRequestHandler):
                             extra["Content-Disposition"] = f'attachment; filename="{p.name}"'
                         src = thumb(p) if m.group(1) == "thumb" else p
                         return self.reply(200, src.read_bytes(), "image/jpeg", extra)
-            m = re.fullmatch(r"gif/([a-z_]+)\.gif", rest)
+            m = re.fullmatch(r"gif/([a-z0-9_]+)\.gif", rest)
             if m and m.group(1) in VIEWS:
                 try:
                     p = _gif_fn(m.group(1), HOURS)

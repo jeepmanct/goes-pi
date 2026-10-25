@@ -581,7 +581,7 @@ GIF_LOCK = threading.Lock()
 
 def make_gif(view, hours):
     """An animated GIF of a rendered view's last `hours` hours (cached 10 min). Returns its path."""
-    if not re.fullmatch(r"[a-z_]{2,20}", view) or view in ("fd", "m1", "m2") \
+    if not re.fullmatch(r"[a-z0-9_]{2,20}", view) or view in ("fd", "m1", "m2") \
             or not (DATA_DIR / "goes19" / view).is_dir():
         raise ValueError("unknown view")
     hours = min(max(hours, 1), 72)
@@ -617,7 +617,7 @@ MP4_LOCK = threading.Lock()
 
 def make_mp4(view, hours):
     """An H.264 time-lapse of a rendered view's last `hours` hours (cached 10 min). Returns its path."""
-    if not re.fullmatch(r"[a-z_]{2,20}", view) or view in ("fd", "m1", "m2") \
+    if not re.fullmatch(r"[a-z0-9_]{2,20}", view) or view in ("fd", "m1", "m2") \
             or not (DATA_DIR / "goes19" / view).is_dir():
         raise ValueError("unknown view")
     hours = min(max(hours, 1), 72)
@@ -892,10 +892,10 @@ class Handler(BaseHTTPRequestHandler):
                 hrs = min(max(float(q.get("hours", ["24"])[0]), 1), 24 * 14)
                 return self.send_json({"points": watch.history(hrs), "state": watch.status(),
                                        "hours": hrs})
-            gm = re.fullmatch(r"/gif/([a-z_]+)-(\d+)h\.gif", u.path)
+            gm = re.fullmatch(r"/gif/([a-z0-9_]+)-(\d+)h\.gif", u.path)
             if gm:
                 return self.send_file(make_gif(gm.group(1), float(gm.group(2))))
-            mm = re.fullmatch(r"/mp4/([a-z_]+)-(\d+)h\.mp4", u.path)
+            mm = re.fullmatch(r"/mp4/([a-z0-9_]+)-(\d+)h\.mp4", u.path)
             if mm:
                 return self.send_file(make_mp4(mm.group(1), float(mm.group(2))))
             if u.path == "/api/pi":
