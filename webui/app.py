@@ -61,6 +61,7 @@ THUMBS = WEB_DIR / "thumbs"
 PASSWORD_FILE = WEB_DIR / "password.txt"
 RECV_CONF = GOES_DIR / "goesrecv.conf"
 PROC_CONF = GOES_DIR / "goesproc.conf"
+PANEL_STARTED = time.time()
 PORT = int(os.environ.get("GOES_UI_PORT", "8080"))
 CERT = Path(os.environ.get("GOES_UI_CERT", WEB_DIR / "tls" / "fullchain.pem"))
 KEY = Path(os.environ.get("GOES_UI_KEY", WEB_DIR / "tls" / "privkey.pem"))
@@ -173,6 +174,7 @@ def status():
         temp = int(Path("/sys/class/thermal/thermal_zone0/temp").read_text()) / 1000
     except OSError:
         pass
+    out["panel"] = {"started": PANEL_STARTED}
     out["system"] = {"disk_free": du.free, "disk_total": du.total,
                      "cpu_temp": temp, "load": os.getloadavg()[0],
                      "time": time.time()}
