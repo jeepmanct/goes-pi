@@ -174,6 +174,16 @@ def chart_frames(pattern, n=12):
     return list(out.values())[-max(1, min(n, 40)):]
 
 
+def chart_file(name):
+    """Path of a graphic that is on the chart list right now (so only known EMWIN images can be served), or None."""
+    _rows()
+    g = _gseen.get(name)
+    if not g or not any(re.match(pat, g["pil"]) for _grp, items in CHARTS for pat, _l in items):
+        return None
+    p = EMWIN / name
+    return p if p.is_file() else None
+
+
 def summary(hours=48):
     """Counts per category and the list of offices, for the filter controls."""
     cut = time.time() - hours * 3600

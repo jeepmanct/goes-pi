@@ -30,6 +30,8 @@ HOURS = 24          # Views player + GIF window
 GALLERY_HOURS = 72  # how far back the Gallery goes
 THUMBS = Path.home() / "goes" / "webui" / "thumbs" / "share"
 _frames_fn = _gif_fn = _forecast_fn = _icon = None
+_wx = None            # (local module, products module) for the Weather tab; None turns the tab's data off
+_wx_cache = {}
 _cache = {}
 _lock = threading.Lock()
 
@@ -287,10 +289,14 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #stale{padding:10px 12px;border-radius:8px;margin-bottom:10px;font-size:14px;background:#d9770622;border:1px solid #d97706}
 #fc h2{font-size:18px;margin:14px 0 2px}#fc h3{font-size:14px;margin:12px 0 2px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
 #fc p{color:var(--fg);font-size:15px;margin:5px 0}#fc .iss{color:var(--mut);font-size:13px}
+#wx h2{font-size:18px;margin:16px 0 2px}#wx .iss{color:var(--mut);font-size:13px}#wx .big{font-size:28px;font-weight:700;margin:4px 0}
+#wx p{color:var(--fg);font-size:15px;margin:5px 0}#wx pre{background:var(--bg);border-radius:8px;padding:8px;overflow:auto;font-size:13px}
+#wx .al{padding:10px 12px;border-radius:8px;font-size:15px;font-weight:600}#wx .al.ok{background:#2ea04322;border:1px solid #2ea043}
+#wx .al.bad{background:#da363322;border:1px solid #da3633}#wx #cbar{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
 </style></head><body><main><h1>GOES-19 East satellite</h1>
 <p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.<span id="lu"></span></p>
 <div id="stale" style="display:none"></div>
-<div id="tabs"><button id="tv" class="on">Views</button><button id="tg">Gallery</button><button id="tf">Forecast</button><button id="th">How it works</button></div>
+<div id="tabs"><button id="tv" class="on">Views</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button><button id="th">How it works</button></div>
 <div class="card" id="views"><select id="v">%OPTS%</select>
 <img id="im" alt="GOES-19 view"><div id="bar"><button id="play">Play</button>
 <a class="b" id="gif" download>GIF</a><input type="range" id="s" min="0" max="0" value="0"><span id="t"></span></div>
@@ -298,6 +304,10 @@ button,a.b,select{cursor:pointer;min-height:40px}
 <div class="card" id="gal" style="display:none"><select id="gv"><option value="">All views</option>%OPTS%</select>
 <div id="grid"></div><p id="gm"></p><button id="more" style="display:none">Load more</button></div>
 <div class="card" id="fc" style="display:none"><p id="fm">Loading…</p><div id="ft"></div></div>
+<div class="card" id="wx" style="display:none"><p id="wxm">Loading…</p><div id="wxt"></div>
+<h2>Radar and weather maps</h2><div id="cbar"><select id="cs"></select><button id="cp">Pause</button></div>
+<img id="ci" alt="NWS weather map" style="display:none"><input type="range" id="csl" min="0" max="0" value="0" style="width:100%;margin-top:8px;display:none">
+<p id="cm"></p></div>
 <div class="card" id="how" style="display:none">%HOW%</div>
 <div id="lb" style="display:none"><img id="lbi"><div><a class="b" id="lbs">Save</a> <button id="lbc">Close</button></div></div></main><script>
 const V=%VJSON%;
@@ -316,13 +326,40 @@ await Promise.all(F.map(f=>new Promise(r=>{const i=new Image();i.onload=i.onerro
 $('#play').disabled=false;$('#play').textContent='Pause';let i=+$('#s').value>=F.length-1?0:+$('#s').value;show(i);
 T=setInterval(()=>{i=(i+1)%F.length;show(i)},300)};
 const fmt=t=>{const d=new Date(t*1000);return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-function tab(n){$('#fc').style.display=n==3?'':'none';$('#tf').className=n==3?'on':'';if(n==3)forecast();$('#views').style.display=n==0?'':'none';$('#gal').style.display=n==1?'':'none';$('#how').style.display=n==2?'':'none';$('#tv').className=n==0?'on':'';$('#tg').className=n==1?'on':'';$('#th').className=n==2?'on':'';if(n)stop();if(n==1&&!$('#grid').children.length)gal(true)}
-$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);
+function tab(n){const ids=['views','gal','how','fc','wx'],btn=['tv','tg','th','tf','tw'];
+ids.forEach((id,i)=>{$('#'+id).style.display=i==n?'':'none';$('#'+btn[i]).className=i==n?'on':''});
+if(n)stop();if(n!=4)stopC();if(n==3)forecast();if(n==1&&!$('#grid').children.length)gal(true);if(n==4)weather()}
+$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);$('#tw').onclick=()=>tab(4);
 let fdone=0;
 async function forecast(){if(fdone&&Date.now()-fdone<120000)return;fdone=Date.now();
 const r=await(await fetch(B+'api/forecast')).json();const h=r.offices.map(o=>'<h2>'+esc(o.office)+'</h2><div class="iss">'+esc(o.issued)+(o.age_h>12?' &middot; '+Math.round(o.age_h)+' h old':'')+'</div>'+
 o.sections.map(s=>'<h3>'+esc(s.head)+'</h3>'+s.paras.map(p=>'<p>'+esc(p)+'</p>').join('')).join('')).join('');
 $('#ft').innerHTML=h;$('#fm').textContent=r.offices.length?'The National Weather Service area forecast discussions, as received by the satellite broadcast. Written by forecasters for a technical audience.':'No forecast discussions have arrived yet.'}
+let wdone=0,CH=[],CT=null,cinit=false;
+function wblock(title,note,rows){return '<h2>'+esc(title)+'</h2>'+(note?'<div class="iss">'+esc(note)+'</div>':'')+rows.map(r=>'<p>'+(r[1]===undefined?esc(r[0]):'<b>'+esc(r[0])+'</b> '+esc(r[1]))+'</p>').join('')}
+async function weather(){if(wdone&&Date.now()-wdone<120000){return}wdone=Date.now();
+let r;try{r=await(await fetch(B+'api/weather')).json()}catch(e){$('#wxm').textContent='Weather data is not available right now.';return}
+if(r.error){$('#wxm').textContent='Weather data is not available right now.';return}
+const al=r.alerts||[];let h='<div class="al '+(al.length?'bad':'ok')+'">'+(al.length?al.length+' alert'+(al.length>1?'s':'')+' for Stratford: '+al.map(a=>esc(a.name)+(a.ends?' until '+fmt(a.ends):'')).join(' &middot; '):'No alerts in force for Fairfield County or the western Sound')+'</div>';
+const n=r.now;if(n)h+='<h2>'+esc(r.place)+'</h2><div class="big">'+(n.temp_f!=null?n.temp_f+'&deg;F ':'')+esc(n.wx.length?n.wx[0]:(n.sky.length?n.sky[n.sky.length-1].cover:''))+'</div><div class="iss">Bridgeport airport, '+fmt(n.t)+' &middot; '+esc(n.summary)+(n.pressure_inhg?' &middot; '+n.pressure_inhg.toFixed(2)+' inHg':'')+'</div>';
+if(r.forecast)h+=wblock(r.forecast.name+' forecast',r.forecast.issued,r.forecast.periods.slice(0,6));
+if(r.marine)h+=wblock('Long Island Sound (west of New Haven)',r.marine.issued,(r.marine.headlines||[]).map(x=>[x]).concat(r.marine.periods.slice(0,5)));
+if(r.taf)h+='<h2>Airport forecast (TAF) for Bridgeport</h2><div class="iss">'+fmt(r.taf.t)+'</div><pre>'+esc(r.taf.text)+'</pre>';
+const sp=r.space;if(sp&&(sp.alert||sp.sunspot!=null)){const rows=[];if(sp.alert)rows.push([sp.alert.text+',',fmt(sp.alert.t)+(sp.alert.aurora?'. '+sp.alert.aurora:'')]);
+if(sp.sunspot!=null)rows.push(['Sunspot number',sp.sunspot+' · 10.7 cm flux '+sp.flux]);h+=wblock('Space weather','Aurora is only likely in Connecticut at a K-index of 7 or more.',rows)}
+$('#wxt').innerHTML=h;$('#wxm').textContent='Current conditions and forecasts from the National Weather Service, as received over the satellite.';
+if(!cinit){cinit=true;try{const c=await(await fetch(B+'api/charts')).json();
+$('#cs').innerHTML=c.groups.map(g=>'<optgroup label="'+esc(g.group)+'">'+g.items.map(i=>'<option value="'+esc(i.code)+'">'+esc(i.label)+'</option>').join('')+'</optgroup>').join('');
+const rad=[...$('#cs').options].find(o=>o.value=='RADNTHES');if(rad)$('#cs').value='RADNTHES';chart()}catch(e){}}}
+function stopC(){clearInterval(CT);CT=null;$('#cp').textContent='Play'}
+function cshow(i){const f=CH[i];if(!f)return;$('#ci').src=B+'chart/'+encodeURIComponent(f.name);$('#csl').value=i;
+const m=Math.round((Date.now()/1000-f.t)/60);$('#cm').textContent=fmt(f.t)+' ('+(m<90?m+' min':Math.round(m/60)+' h')+' old)'+(CH.length>1?' \u00b7 frame '+(i+1)+' of '+CH.length:'')+'. Issued time; the feed repeats older maps.'}
+async function chart(){stopC();const r=await(await fetch(B+'api/chart?code='+encodeURIComponent($('#cs').value)+'&n=12')).json();CH=r.frames||[];
+$('#ci').style.display=CH.length?'':'none';$('#csl').style.display=CH.length>1?'':'none';$('#cp').style.display=CH.length>1?'':'none';
+if(!CH.length){$('#cm').textContent='Nothing received yet.';return}$('#csl').max=CH.length-1;CH.forEach(f=>{const i=new Image();i.src=B+'chart/'+encodeURIComponent(f.name)});
+cshow(CH.length-1);if(CH.length>1){$('#cp').textContent='Pause';let i=CH.length-1;CT=setInterval(()=>{i=(i+1)%CH.length;cshow(i)},700)}}
+$('#cs').onchange=chart;$('#csl').oninput=e=>{stopC();cshow(+e.target.value)};
+$('#cp').onclick=()=>{if(CT)return stopC();let i=+$('#csl').value;CT=setInterval(()=>{i=(i+1)%CH.length;cshow(i)},700);$('#cp').textContent='Pause'};
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function stale(){try{const r=await(await fetch(B+'api/status')).json();const m=Math.round((r.now-r.last)/60);const b=$('#stale');
 if(!r.last){b.style.display='';b.textContent='No images have arrived yet.';return}
@@ -362,6 +399,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def wx_data(self):
+        """Weather tab data, cached for two minutes so many viewers cost one scan."""
+        hit = _wx_cache.get("w")
+        if hit and time.time() - hit[0] < 120:
+            return hit[1]
+        d = _wx[0].summary()
+        d = {k: d[k] for k in ("place", "now", "taf", "forecast", "marine", "space")} | {"alerts": d["alerts"]}
+        _wx_cache["w"] = (time.time(), d)
+        return d
+
     def do_GET(self):
         try:
             path, _, query = self.path.partition("?")
@@ -386,6 +433,24 @@ class Handler(BaseHTTPRequestHandler):
                 data = _forecast_fn() if _forecast_fn else []
                 return self.reply(200, json.dumps({"offices": data}).encode(), "application/json",
                                   {"Cache-Control": "max-age=120"})
+            if rest == "api/weather" and _wx:
+                return self.reply(200, json.dumps(self.wx_data()).encode(), "application/json", {"Cache-Control": "max-age=60"})
+            if rest == "api/charts" and _wx:
+                return self.reply(200, json.dumps({"groups": _wx[1].charts()}).encode(), "application/json",
+                                  {"Cache-Control": "max-age=60"})
+            if rest == "api/chart" and _wx:
+                try:
+                    fr = _wx[1].chart_frames(q.get("code", [""])[0], int(q.get("n", ["12"])[0]))
+                except ValueError:
+                    return self.reply(404, b"not found")
+                return self.reply(200, json.dumps({"frames": fr}).encode(), "application/json", {"Cache-Control": "max-age=60"})
+            m = re.fullmatch(r"chart/([A-Za-z0-9_.-]+\.(GIF|PNG|JPG))", rest)
+            if m and _wx:
+                p = _wx[1].chart_file(m.group(1))
+                if p:
+                    ctype = {"GIF": "image/gif", "PNG": "image/png", "JPG": "image/jpeg"}[m.group(2)]
+                    return self.reply(200, p.read_bytes(), ctype, {"Cache-Control": "max-age=3600"})
+                return self.reply(404, b"not found")
             if rest == "":
                 count_visit(lk["id"])
                 opts = "".join(f'<option value="{k}">{v}</option>' for k, v in VIEWS.items())
@@ -432,9 +497,9 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
-def start(frames_fn, gif_fn, forecast_fn=None, icon=None):
-    global _frames_fn, _gif_fn, _forecast_fn, _icon
-    _frames_fn, _gif_fn, _forecast_fn, _icon = frames_fn, gif_fn, forecast_fn, icon
+def start(frames_fn, gif_fn, forecast_fn=None, icon=None, wx=None):
+    global _frames_fn, _gif_fn, _forecast_fn, _icon, _wx
+    _frames_fn, _gif_fn, _forecast_fn, _icon, _wx = frames_fn, gif_fn, forecast_fn, icon, wx
     links()
     _load_visits()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)

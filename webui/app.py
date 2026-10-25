@@ -1018,7 +1018,7 @@ if __name__ == "__main__":
     threading.Thread(target=lambda: (products.charts(), local.summary()), daemon=True).start()     # warm the product index so the first Charts/Weather open is quick
     threading.Thread(target=prewarm_thumbs, daemon=True).start()
     try:
-        share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")
+        share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png", wx=(local, products))
     except OSError as e:
         print("share page not started:", e, flush=True)
     if os.environ.get("GOES_AUTOSTART", "1") == "1":
