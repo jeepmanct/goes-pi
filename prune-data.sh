@@ -4,12 +4,13 @@
 #      the rendered views (globe, regions, fog) are kept much longer
 #   2. EMWIN graphics older than EMWIN_DAYS are deleted
 #   3. EMWIN text older than EMWIN_DAYS is deleted unless its issuing office is in keep-offices.txt
-#   4. backstop: if the whole data dir reaches 190 GB, delete the oldest files until it is back under
+#   4. backstop: if the whole data dir reaches 900 GB, delete the oldest files until it is back under
+#      (the backup/ folder of state archives is never deleted by this)
 DATA=${GOES_DATA:-/home/pi/goes/data}
 KEEP=${GOES_KEEP:-/home/pi/goes/keep-offices.txt}
-RAW_DAYS=${RAW_DAYS:-7}
+RAW_DAYS=${RAW_DAYS:-180}
 EMWIN_DAYS=${EMWIN_DAYS:-3}
-TRIGGER=${TRIGGER:-$((190*1000*1000*1000))}
+TRIGGER=${TRIGGER:-$((900*1000*1000*1000))}
 LOCK=${GOES_LOCK:-/tmp/goes-prune.lock}
 exec 9>"$LOCK"; flock -n 9 || exit 0
 
