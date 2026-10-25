@@ -293,10 +293,14 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #wx p{color:var(--fg);font-size:15px;margin:5px 0}#wx pre{background:var(--bg);border-radius:8px;padding:8px;overflow:auto;font-size:13px}
 #wx .al{padding:10px 12px;border-radius:8px;font-size:15px;font-weight:600}#wx .al.ok{background:#2ea04322;border:1px solid #2ea043}
 #wx .al.bad{background:#da363322;border:1px solid #da3633}#wx #cbar{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
-</style></head><body><main><h1>GOES-19 East satellite</h1>
+#hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 4px}#hd h1{margin:0}
+#th{font-size:12px;padding:3px 11px;min-height:0;border-radius:99px;color:var(--mut)}
+#gif{font-size:12px;padding:3px 11px;min-height:0;line-height:1.5;border-radius:99px;color:var(--mut)}#th.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+#tabs{overflow-x:auto}#tabs button{white-space:nowrap}
+</style></head><body><main><div id="hd"><h1>GOES-19 East satellite</h1><button id="th">How it works</button></div>
 <p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.<span id="lu"></span></p>
 <div id="stale" style="display:none"></div>
-<div id="tabs"><button id="tv" class="on">Views</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button><button id="th">How it works</button></div>
+<div id="tabs"><button id="tv" class="on">Views</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button></div>
 <div class="card" id="views"><select id="v">%OPTS%</select>
 <img id="im" alt="GOES-19 view"><div id="bar"><button id="play">Play</button>
 <a class="b" id="gif" download>GIF</a><input type="range" id="s" min="0" max="0" value="0"><span id="t"></span></div>
