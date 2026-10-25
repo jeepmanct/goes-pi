@@ -28,7 +28,7 @@ DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
 CACHE = Path("/home/pi/goes/cache/views")   # static per-region geometry, rebuilt if GEO_VER changes
-GEO_VER = 1
+GEO_VER = 3
 LOCAL = ZoneInfo("America/New_York")
 
 SUB_LON = -75.0                 # projection origin in the HRIT headers (geos(-75.0)); coastline fit peaks here, not at -75.2
@@ -415,6 +415,7 @@ def build_overlay(spec, box, f, size, disc):
                 d.point((x, y), fill=(v, v, min(255, v + 25), 255))
         graticule(d, box, f, (170, 200, 255, 38))
         draw_lines(d, "coastline", box, f, scale, (255, 235, 140, 120), 1)
+        draw_lines(d, "admin_0_boundary_lines_land", box, f, scale, (255, 235, 140, 160), 1)
     if spec["borders"]:
         draw_lines(d, "admin_1_states_provinces_lines", box, f, scale, (255, 255, 255, 60), lw)
         draw_lines(d, "admin_0_boundary_lines_land", box, f, scale, (255, 235, 140, 150), lw)
