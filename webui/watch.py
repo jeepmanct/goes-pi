@@ -458,6 +458,141 @@ def _trend_loop():
         time.sleep(1800)
 
 
+# ---- outside heartbeat, new-storm push, cold-cloud-tops push ------------------------------------------
+
+STORM_FILE = GOES_DIR / "storm.json"
+STORM_SEEN = GOES_DIR / ".storm-announced"
+VIEWS = GOES_DIR / "views.py"
+NYC_BOX = (39.2, 42.8, -76.0, -71.0)      # lat0, lat1, lon0, lon1 around New York
+COLD_TOP_K = 213.0                          # about -60 C: deep convection
+COLD_PIXELS = 25                            # 2 km pixels colder than 220 K needed so one noisy pixel never alerts
+_views_mod = {}
+
+
+def _alerts_cfg():
+    try:
+        return tomllib.loads(MAIL_CONF.read_text()).get("alerts", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def heartbeat_once(url=None):
+    """GET the dead-man-switch URL ([alerts] heartbeat_url, e.g. a healthchecks.io ping). Adds /fail while the
+    satellite signal is lost, so that service can also warn about that. Returns True if it answered."""
+    url = url or str(_alerts_cfg().get("heartbeat_url", "")).strip()
+    if not url.startswith("https://"):
+        return False
+    if _state["signal"] == "lost":
+        url = url.rstrip("/") + "/fail"
+    import urllib.request
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "goes-panel"}), timeout=15).read(64)
+        return True
+    except Exception as e:
+        print("heartbeat failed:", type(e).__name__, flush=True)    # never print the URL: it can be a secret
+        return False
+
+
+def _heartbeat_loop():
+    time.sleep(60)
+    while True:
+        try:
+            heartbeat_once()
+        except Exception as e:
+            print("heartbeat error:", type(e).__name__, flush=True)
+        time.sleep(300)
+
+
+def storm_check():
+    """Push once when storm.json names a storm we have not announced yet. Returns the message sent, or None."""
+    try:
+        j = json.loads(STORM_FILE.read_text())
+        name = str(j["name"])[:40]
+        lat, lon = float(j["lat"]), float(j["lon"])
+    except (OSError, ValueError, KeyError):
+        return None
+    last = STORM_SEEN.read_text().strip() if STORM_SEEN.exists() else ""
+    if last == name:
+        return None
+    msg = f"{name}: centre near {abs(lat):.1f}{'N' if lat >= 0 else 'S'} {abs(lon):.1f}{'W' if lon < 0 else 'E'}. The Storm view in the panel now follows it."
+    if push_only(f"GOES: {name}", msg, tags="cyclone", priority="high"):
+        STORM_SEEN.write_text(name)
+        return msg
+    return None
+
+
+def _views():
+    if "m" not in _views_mod:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("goes_views", VIEWS)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _views_mod["m"] = mod
+    return _views_mod["m"]
+
+
+def cold_tops(now=None):
+    """(min brightness temperature K, pixels colder than 220 K, scan time) near New York from the newest C13 scan,
+    or None if there is no fresh scan."""
+    v = _views()
+    files = v.scan_files()
+    if not files.get("13"):
+        return None
+    t, p = files["13"][-1]
+    if (now or time.time()) - t.timestamp() > 90 * 60:
+        return None
+    table = v.bt_table(p)
+    if table is None:
+        return None
+    la0, la1, lo0, lo1 = NYC_BOX
+    box = v.region_box((la0, la1, lo0, lo1), 1)
+    w = v.window_bt(v.load_full(p), table, box, 1)
+    return float(w.min()), int((w < 220.0).sum()), t
+
+
+def _convect_loop():
+    time.sleep(300)
+    while True:
+        try:
+            got = cold_tops()
+            if got and got[0] < COLD_TOP_K and got[1] >= COLD_PIXELS:
+                mn, n, t = got
+                push_only("GOES: cold cloud tops near NYC",
+                          f"Cloud tops as cold as {mn:.0f} K ({mn - 273.15:.0f} C) over {n * 4} sq km near New York at "
+                          f"{t:%H:%M} UTC. That can mean strong thunderstorms. Open Views, Cloud tops: Northeast.",
+                          key="coldtops", every=3 * 3600, priority="high", tags="cloud_with_lightning")
+        except Exception as e:
+            print("cold-tops error:", e, flush=True)
+        try:
+            storm_check()
+        except Exception as e:
+            print("storm check error:", e, flush=True)
+        time.sleep(900)
+
+
+def _monthly_loop():
+    """Build last month's time-lapse videos in the first days of each month (a skipped run is retried)."""
+    import importlib.util
+    from zoneinfo import ZoneInfo
+    time.sleep(600)
+    while True:
+        try:
+            now = dt.datetime.now(ZoneInfo("America/New_York"))
+            if now.day <= 3 and now.hour >= 3:
+                spec = importlib.util.spec_from_file_location("goes_monthly", GOES_DIR / "monthly.py")
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                y, m = mod.previous_month(now)
+                made = [p for v in mod.VIEWS if (p := mod.build(v, y, m))]
+                if made:
+                    push_only(f"GOES: {dt.date(y, m, 1):%B %Y} time-lapse ready",
+                              "Saved in the Files tab under archive: " + ", ".join(p.name for p in made),
+                              tags="movie_camera")
+        except Exception as e:
+            print("monthly error:", e, flush=True)
+        time.sleep(3600)
+
+
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()

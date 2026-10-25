@@ -71,7 +71,39 @@ def my_offices():
     return out
 
 
+GR_RE = re.compile(r"^[AZ]_[A-Z0-9]{6}[A-Z]{4}(\d{6})_C_KWIN_(\d{14})_\d+-\d-([A-Z0-9]{4,10})\.(GIF|PNG|JPG)$")
+_gseen = {}     # graphics: file name -> {"name", "t", "pil"} or None
+CHARTS = [      # (group, [(PIL prefix regex, label)])
+    ("Radar", [("RADNTHES", "Northeast"), ("RADREFUS", "US reflectivity"), ("RADSTHES", "Southeast"),
+               ("RADGRTLK", "Great Lakes"), ("RADSTHPL", "Southern Plains"), ("RADSMSVY", "Lower Mississippi Valley"),
+               ("RADUMSVY", "Upper Mississippi Valley"), ("RADRCKNT", "Northern Rockies"), ("RADRCKST", "Southern Rockies"),
+               ("RADPACNW", "Pacific Northwest"), ("RADPACSW", "Pacific Southwest"), ("RADALLAK", "Alaska"),
+               ("RADALLHI", "Hawaii"), ("RADALLPR", "Puerto Rico"), ("RADALLGU", "Guam")]),
+    ("Warnings and forecasts", [("IMGWWAUS", "Watches and warnings"), ("USHZTHRT", "Hazard threats"),
+                                ("MODQP", "Precipitation forecast"), ("MODDY", "Forecast maps by day")]),
+    ("Analysis", [("CSA", "Surface analysis"), ("IMGFNT", "Fronts")]),
+    ("Satellite", [("G10CIR", "GOES infrared, US")]),
+    ("Tropics", [("AL\\d", "Atlantic outlook"), ("EP\\d", "East Pacific outlook")]),
+]
 _seen = {}      # file name -> parsed row (or None if it does not look like a product); only new names are parsed
+
+
+def issued_ts(ddhhmm, recv):
+    """Issue time (UTC epoch) from the day/hour/minute in the WMO heading and the arrival time. EMWIN rebroadcasts
+    old products, so arrival time alone says nothing about how current a product is."""
+    day, hh, mm = int(ddhhmm[:2]), int(ddhhmm[2:4]), int(ddhhmm[4:])
+    r = dt.datetime.fromtimestamp(recv, dt.timezone.utc)
+    for back in (0, 1, 2):
+        y, mo = r.year, r.month - back
+        while mo < 1:
+            mo, y = mo + 12, y - 1
+        try:
+            c = dt.datetime(y, mo, day, hh, mm, tzinfo=dt.timezone.utc).timestamp()
+        except ValueError:
+            continue
+        if c <= recv + 3600:
+            return c
+    return recv
 
 
 def _rows():
@@ -85,13 +117,23 @@ def _rows():
             names = set()
         for gone in set(_seen) - names:
             del _seen[gone]
-        for n in names - set(_seen):
+        for gone in set(_gseen) - names:
+            del _gseen[gone]
+        for n in names - set(_seen) - set(_gseen):
             m = NAME_RE.match(n)
             row = None
-            if m:
-                head, office, _issued, recv, pil = m.groups()
+            g = None if m else GR_RE.match(n)
+            if g:
                 try:
-                    t = dt.datetime.strptime(recv, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp()
+                    recv = dt.datetime.strptime(g.group(2), "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp()
+                    _gseen[n] = {"name": n, "pil": g.group(3), "t": issued_ts(g.group(1), recv)}
+                except ValueError:
+                    _gseen[n] = None
+                continue
+            if m:
+                head, office, issued, recv, pil = m.groups()
+                try:
+                    t = issued_ts(issued, dt.datetime.strptime(recv, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp())
                     row = {"name": n, "t": t, "office": office[1:], "cat": pil[:3], "site": pil[3:], "head": head}
                 except ValueError:
                     pass
@@ -99,6 +141,37 @@ def _rows():
         rows = sorted((r for r in _seen.values() if r), key=lambda r: -r["t"])
         _index["t"], _index["rows"] = time.time(), rows
         return rows
+
+
+def _graphics(pattern):
+    _rows()
+    rx = re.compile(pattern)
+    return sorted((g for g in list(_gseen.values()) if g and rx.match(g["pil"])), key=lambda g: g["t"])
+
+
+def charts():
+    """Chart groups with the products that have arrived, and the age of the newest one."""
+    out = []
+    for group, items in CHARTS:
+        row = []
+        for pat, label in items:
+            gs = _graphics(pat)
+            if gs:
+                row.append({"code": pat, "label": label, "t": gs[-1]["t"], "name": gs[-1]["name"], "n": len(gs)})
+        if row:
+            out.append({"group": group, "items": row})
+    return out
+
+
+def chart_frames(pattern, n=12):
+    """The newest n images of one chart product, oldest first (for a loop)."""
+    allowed = {pat for _g, items in CHARTS for pat, _l in items}
+    if pattern not in allowed:
+        raise ValueError("unknown chart")
+    out = {}
+    for g in _graphics(pattern):          # oldest first; rebroadcast duplicates share a time, keep the last of each
+        out[g["t"]] = {"name": g["name"], "t": g["t"]}
+    return list(out.values())[-max(1, min(n, 40)):]
 
 
 def summary(hours=48):

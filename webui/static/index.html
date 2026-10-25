@@ -133,6 +133,11 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <h2>Frequency offset (Hz)</h2>
     <canvas id="c-freq"></canvas>
   </div>
+  <div class="card">
+    <h2>Sky from New York</h2>
+    <div id="sky" style="line-height:1.7"></div>
+    <p class="msg">The dish points at GOES-19 (75°W). Twice a year, around the equinoxes, the sun passes behind the satellite for a few minutes a day and the signal drops out; that is the sun, not a fault.</p>
+  </div>
   <div class="msg" id="aim-msg"></div>
 </section>
 
@@ -269,6 +274,13 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
         <option value="wv_gulf">Water vapor: Gulf &amp; Caribbean</option>
         <option value="wv_globe">Water vapor: Full disk</option>
       </optgroup>
+      <optgroup label="Cloud-top temperature (storm strength)">
+        <option value="ct_northeast">Cloud tops: Northeast US</option>
+        <option value="ct_eastus">Cloud tops: East Coast US</option>
+        <option value="ct_gulf">Cloud tops: Gulf &amp; Caribbean</option>
+        <option value="ct_namer">Cloud tops: North America</option>
+        <option value="ct_globe">Cloud tops: Full disk</option>
+      </optgroup>
       <optgroup label="Storm (only while an advisory is active)">
         <option value="storm">Storm-following view</option>
       </optgroup>
@@ -288,11 +300,20 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     </select>
   </div>
   <div class="card">
-    <img id="globe-img" alt="GOES-19 view">
+    <div id="globe-wrap" style="position:relative">
+      <img id="globe-img" alt="GOES-19 view">
+      <img id="cmp-img" alt="" style="display:none;position:absolute;left:0;top:0;width:100%;height:100%;border-radius:8px;pointer-events:none">
+      <div id="cmp-line" style="display:none;position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 4px #000;pointer-events:none"></div>
+    </div>
+    <div class="row" id="cmp-row" style="display:none;margin-top:10px">
+      <select id="cmp-region" style="width:auto;max-width:100%"></select>
+      <input type="range" id="cmp-pos" min="0" max="100" value="50" style="flex:1;min-width:140px">
+    </div>
     <div id="globe-bar">
       <button class="b" id="globe-play">Play</button>
       <button class="b ghost" id="globe-vid">Video</button>
       <button class="b ghost" id="globe-gif">GIF</button>
+      <button class="b ghost" id="globe-cmp">Compare</button>
       <input type="range" id="globe-slider" min="0" max="0" value="0">
       <span class="msg" id="globe-time"></span>
     </div>
@@ -347,6 +368,20 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   </div>
   <div id="wx-list"></div>
   <div class="row"><button class="b ghost" id="wx-more" style="display:none">Load more</button></div>
+</section>
+
+<section id="charts">
+  <div class="card">
+    <div class="row">
+      <select id="ch-sel" style="width:auto;max-width:100%"></select>
+      <select id="ch-n" style="width:auto"><option value="1">Latest only</option><option value="8">Loop 8</option><option value="16" selected>Loop 16</option><option value="30">Loop 30</option></select>
+      <button class="b ghost" id="ch-play">Pause</button>
+    </div>
+    <p class="msg" id="ch-msg"></p>
+    <img id="ch-img" alt="" style="width:100%;border-radius:8px;background:var(--bg)">
+    <input type="range" id="ch-slider" min="0" max="0" value="0" style="margin-top:10px">
+    <p class="msg">NWS graphics as received over the satellite. The feed repeats old products, so the time shown is when each image was issued, not when it arrived.</p>
+  </div>
 </section>
 
 <section id="mail">
@@ -424,7 +459,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['weather','Weather'],['mail','Mail'],['logs','Logs']];
+const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['weather','Weather'],['charts','Charts'],['mail','Mail'],['logs','Logs']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -442,6 +477,8 @@ function show(id) {
   if (id === 'mail') { loadMail(); loadShare(); }
   if (id === 'forecast') loadForecast();
   if (id === 'weather') loadWeather();
+  if (id === 'aim') renderSky();
+  if (id === 'charts') loadCharts();
   if (id === 'signal') loadSignal();
   if (id === 'pi') loadPi();
 }
@@ -635,10 +672,54 @@ function showGlobe(i) {
   const x = globeFrames[i]; if (!x) return;
   $('#globe-slider').value = i;
   $('#globe-img').src = fUrl(x);
+  updateCmp();
   const d = new Date(x.t * 1000);
   $('#globe-time').textContent = d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' +
     d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
 }
+// ---- compare two views of the same time with a slider
+let cmpOn = false, cmpFrames = [], cmpLoadId = 0;
+const CMP_PAIR = {northeast: 'ct_northeast', eastus: 'wv_eastus', gulf: 'ct_gulf', namer: 'wv_namer', globe: 'wv_globe', nyc: 'northeast',
+  samer: 'globe', ct_northeast: 'northeast', ct_eastus: 'eastus', ct_gulf: 'gulf', ct_namer: 'namer', ct_globe: 'globe',
+  wv_eastus: 'eastus', wv_namer: 'namer', wv_globe: 'globe', wv_gulf: 'gulf', fog_northeast: 'northeast', fog_eastus: 'eastus',
+  fog_nyc: 'nyc', fog_namer: 'namer', fog_gulf: 'gulf', fog_samer: 'samer', storm: 'northeast'};
+function cmpSplit() {
+  const v = +$('#cmp-pos').value;
+  $('#cmp-img').style.clipPath = `inset(0 0 0 ${v}%)`;
+  const l = $('#cmp-line'); l.style.left = `calc(${v}% - 1px)`;
+}
+function updateCmp() {
+  if (!cmpOn) return;
+  const x = globeFrames[+$('#globe-slider').value], im = $('#cmp-img');
+  if (!x || !cmpFrames.length) { im.style.display = 'none'; $('#cmp-line').style.display = 'none'; return; }
+  let best = cmpFrames[0];
+  cmpFrames.forEach(f => { if (Math.abs(f.t - x.t) < Math.abs(best.t - x.t)) best = f; });
+  const near = Math.abs(best.t - x.t) <= 3600;      // only pair frames from about the same time
+  im.style.display = near ? '' : 'none'; $('#cmp-line').style.display = near ? '' : 'none';
+  if (near) im.src = fUrl(best);
+  $('#globe-msg').textContent = near ? 'Left: ' + $('#globe-region').selectedOptions[0].textContent + '. Right: ' + $('#cmp-region').selectedOptions[0].textContent + '. Drag the slider to compare.'
+    : 'No frame from the other view near this time.';
+  cmpSplit();
+}
+async function loadCmp() {
+  const id = ++cmpLoadId;
+  const d = await api('/api/gallery?region=' + $('#cmp-region').value + '&limit=200');
+  if (id !== cmpLoadId) return;
+  cmpFrames = d.items || []; updateCmp();
+}
+$('#globe-cmp').onclick = () => {
+  cmpOn = !cmpOn;
+  $('#cmp-row').style.display = cmpOn ? '' : 'none';
+  $('#globe-cmp').classList.toggle('ghost', !cmpOn);
+  if (cmpOn) {
+    const sel = $('#cmp-region');
+    if (!sel.options.length) [...$('#globe-region').options].forEach(o => sel.append(new Option(o.textContent, o.value)));
+    sel.value = CMP_PAIR[$('#globe-region').value] || 'globe';
+    loadCmp();
+  } else { $('#cmp-img').style.display = 'none'; $('#cmp-line').style.display = 'none'; loadGlobe(); }
+};
+$('#cmp-region').onchange = loadCmp;
+$('#cmp-pos').oninput = cmpSplit;
 function stopGlobe() { clearInterval(globeTimer); globeTimer = null; $('#globe-play').textContent = 'Play'; }
 async function loadGlobe() {
   stopGlobe();
@@ -656,7 +737,7 @@ async function loadGlobe() {
   $('#globe-img').style.display = globeFrames.length ? '' : 'none';
   if (globeFrames.length) showGlobe(globeFrames.length - 1);
 }
-$('#globe-region').onchange = loadGlobe;
+$('#globe-region').onchange = () => { loadGlobe(); if (cmpOn) { $('#cmp-region').value = CMP_PAIR[$('#globe-region').value] || 'globe'; loadCmp(); } };
 $('#globe-range').onchange = loadGlobe;
 $('#globe-slider').oninput = e => { stopGlobe(); showGlobe(+e.target.value); };
 $('#globe-img').onclick = () => { const x = globeFrames[+$('#globe-slider').value]; if (x) lightbox(gUrl(x)); };
@@ -1134,6 +1215,102 @@ $('#wx-q').onkeydown = e => { if (e.key === 'Enter') { wxWarnOnly = false; wxSea
 $('#wx-mine').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = ''; $('#wx-office').value = wxMine[0] || ''; $('#wx-q').value = ''; wxSearch(true); };
 $('#wx-warn').onclick = () => { wxWarnOnly = true; $('#wx-cat').value = ''; $('#wx-office').value = ''; wxSearch(true); };
 $('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true); };
+
+// ---- sky: sun, moon and where the dish points (New York)
+const SKY = {lat: 40.71, lon: -74.01, satLon: -75.0, tz: 'America/New_York'};
+const rad = Math.PI / 180;
+function sunPos(ms) {
+  const n = ms / 86400000 + 2440587.5 - 2451545.0;
+  const L = 280.460 + 0.9856474 * n, g = (357.528 + 0.9856003 * n) * rad;
+  const lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad, eps = (23.439 - 0.0000004 * n) * rad;
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)), dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+  const H = ((280.46061837 + 360.98564736629 * n + SKY.lon) * rad) - ra, p = SKY.lat * rad;
+  const el = Math.asin(Math.sin(p) * Math.sin(dec) + Math.cos(p) * Math.cos(dec) * Math.cos(H));
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(p) - Math.tan(dec) * Math.cos(p)) + Math.PI;
+  return {el: el / rad, az: (az / rad + 360) % 360};
+}
+function dishDir() {
+  const d = (SKY.satLon - SKY.lon) * rad, p = SKY.lat * rad, c = Math.cos(p) * Math.cos(d), k = 6378.14 / 42164.17;
+  return {el: Math.atan((c - k) / Math.sqrt(1 - c * c)) / rad, az: (180 + Math.atan(Math.tan(d) / Math.sin(p)) / rad + 360) % 360};
+}
+function angSep(a, b) {
+  const x = a.el * rad, y = b.el * rad, d = (a.az - b.az) * rad;
+  return Math.acos(Math.min(1, Math.max(-1, Math.sin(x) * Math.sin(y) + Math.cos(x) * Math.cos(y) * Math.cos(d)))) / rad;
+}
+function nextCross(from, rising) {
+  let prev = sunPos(from).el + 0.833;
+  for (let t = from + 120000; t < from + 27 * 3600000; t += 120000) {
+    const v = sunPos(t).el + 0.833;
+    if (rising ? (prev < 0 && v >= 0) : (prev >= 0 && v < 0)) return t;
+    prev = v;
+  }
+  return null;
+}
+function moonInfo(ms) {
+  const age = (((ms / 86400000 + 2440587.5) - 2451550.1) % 29.530588853 + 29.530588853) % 29.530588853;
+  const illum = (1 - Math.cos(2 * Math.PI * age / 29.530588853)) / 2;
+  const names = ['New moon', 'Waxing crescent', 'First quarter', 'Waxing gibbous', 'Full moon', 'Waning gibbous', 'Last quarter', 'Waning crescent'];
+  return {name: names[Math.round(age / 29.530588853 * 8) % 8], illum: Math.round(illum * 100)};
+}
+function renderSky() {
+  const box = $('#sky'); if (!box) return;
+  const now = Date.now(), sun = sunPos(now), dish = dishDir(), sep = angSep(sun, dishDir());
+  const tm = t => t ? new Date(t).toLocaleTimeString([], {timeZone: SKY.tz, hour: 'numeric', minute: '2-digit'}) : '–';
+  const rise = nextCross(now, true), set = nextCross(now, false), moon = moonInfo(now);
+  const warn = sep < 4 && sun.el > 0;
+  box.textContent = '';
+  const line = t => { const d = document.createElement('div'); d.textContent = t; box.append(d); return d; };
+  line(`Dish target: azimuth ${dish.az.toFixed(1)}°, elevation ${dish.el.toFixed(1)}°`);
+  line(`Sun now: azimuth ${sun.az.toFixed(0)}°, ${sun.el > 0 ? 'elevation ' + sun.el.toFixed(0) + '°' : 'below the horizon'}`);
+  const sp = line(sun.el > 0 ? `Sun is ${sep.toFixed(1)}° from the dish direction` + (warn ? ' – sun interference, expect signal dropouts' : '') : 'Sun is down');
+  if (warn) sp.style.color = 'var(--warn)';
+  line(`Sunrise ${tm(rise)}, sunset ${tm(set)}`);
+  line(`Moon: ${moon.name}, ${moon.illum}% lit`);
+}
+setInterval(() => { if ($('#aim').classList.contains('active')) renderSky(); }, 30000);
+
+// ---- charts (EMWIN graphics: radar, warnings map, fronts...)
+let chFrames = [], chTimer = null, chReady = false;
+const chAge = t => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 90 ? m + ' min ago' : (m / 60).toFixed(1) + ' h ago'; };
+async function loadCharts() {
+  if (!chReady) {
+    const r = await api('/api/charts');
+    if (r.error) { $('#ch-msg').textContent = r.error; return; }
+    r.groups.forEach(g => {
+      const og = document.createElement('optgroup'); og.label = g.group;
+      g.items.forEach(i => { const o = document.createElement('option'); o.value = i.code; o.textContent = i.label; og.append(o); });
+      $('#ch-sel').append(og);
+    });
+    chReady = true;
+  }
+  chLoad();
+}
+async function chLoad() {
+  clearInterval(chTimer); chTimer = null;
+  const code = $('#ch-sel').value; if (!code) return;
+  $('#ch-msg').textContent = 'Loading…';
+  const r = await api(`/api/chart?code=${encodeURIComponent(code)}&n=${$('#ch-n').value}`);
+  if (r.error || !r.frames.length) { $('#ch-msg').textContent = r.error || 'Nothing received yet.'; return; }
+  chFrames = r.frames;
+  chFrames.forEach(f => { const i = new Image(); i.src = '/file/emwin/' + encodeURIComponent(f.name); });
+  const sl = $('#ch-slider'); sl.max = chFrames.length - 1; sl.value = chFrames.length - 1;
+  sl.style.display = chFrames.length > 1 ? '' : 'none'; $('#ch-play').style.display = chFrames.length > 1 ? '' : 'none';
+  chShow(chFrames.length - 1);
+  if (chFrames.length > 1) { $('#ch-play').textContent = 'Pause'; chTimer = setInterval(chStep, 700); }
+}
+function chShow(i) {
+  const f = chFrames[i]; if (!f) return;
+  $('#ch-img').src = '/file/emwin/' + encodeURIComponent(f.name);
+  $('#ch-slider').value = i;
+  $('#ch-msg').textContent = new Date(f.t * 1000).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'}) + '  ·  ' + chAge(f.t) + (chFrames.length > 1 ? `  ·  frame ${i + 1} of ${chFrames.length}` : '');
+}
+function chStep() { chShow((+$('#ch-slider').value + 1) % chFrames.length); }
+$('#ch-sel').onchange = chLoad; $('#ch-n').onchange = chLoad;
+$('#ch-slider').oninput = e => { clearInterval(chTimer); chTimer = null; $('#ch-play').textContent = 'Play'; chShow(+e.target.value); };
+$('#ch-play').onclick = () => {
+  if (chTimer) { clearInterval(chTimer); chTimer = null; $('#ch-play').textContent = 'Play'; }
+  else { chTimer = setInterval(chStep, 700); $('#ch-play').textContent = 'Pause'; }
+};
 
 // ---- logs
 async function pollLog() {

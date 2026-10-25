@@ -846,6 +846,11 @@ class Handler(BaseHTTPRequestHandler):
                     q.get("cat", [""])[0], q.get("office", [""])[0], q.get("q", [""])[0][:80],
                     min(max(float(q.get("hours", ["48"])[0]), 1), 72), min(int(q.get("limit", ["50"])[0]), 100),
                     max(int(q.get("offset", ["0"])[0]), 0), q.get("warnings", [""])[0] == "1"))
+            if u.path == "/api/charts":
+                return self.send_json({"groups": products.charts()})
+            if u.path == "/api/chart":
+                return self.send_json({"frames": products.chart_frames(q.get("code", [""])[0],
+                                                                       int(q.get("n", ["12"])[0]))})
             if u.path == "/api/product":
                 return self.send_json(products.product(q.get("name", [""])[0]))
             if u.path == "/api/alerts/active":
@@ -1002,6 +1007,7 @@ if __name__ == "__main__":
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
     sysstats.start()
+    threading.Thread(target=products.charts, daemon=True).start()     # warm the product index so the first Charts/Weather open is quick
     threading.Thread(target=prewarm_thumbs, daemon=True).start()
     try:
         share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")

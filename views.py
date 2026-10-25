@@ -29,7 +29,7 @@ DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
 CACHE = Path("/home/pi/goes/cache/views")   # static per-region geometry, rebuilt if GEO_VER changes
-GEO_VER = 4
+GEO_VER = 5
 LOCAL = ZoneInfo("America/New_York")
 
 SUB_LON = -75.0                 # projection origin in the HRIT headers (geos(-75.0)); coastline fit peaks here, not at -75.2
@@ -97,7 +97,11 @@ def _fog(key, label, name):
 
 
 def _wv(key, label, name):
-    return dict(REGIONS[key], name=name, label=label, wv=True, geo=key, sun=False)
+    return dict(REGIONS[key], name=name, label=label, bt=("08", "wv"), geo=key, sun=False)
+
+
+def _ct(key, label, name):
+    return dict(REGIONS[key], name=name, label=label, bt=("13", "ct"), geo=key, sun=False)
 
 
 REGIONS.update({
@@ -134,6 +138,13 @@ def _storm_spec():
 _S = _storm_spec()
 if _S:
     REGIONS["storm"] = _S
+REGIONS.update({
+    "ct_northeast": _ct("northeast", "Cloud tops, Northeast US", "CT_NORTHEAST_US"),
+    "ct_eastus": _ct("eastus", "Cloud tops, East Coast US", "CT_EAST_US"),
+    "ct_gulf":   _ct("gulf", "Cloud tops, Gulf and Caribbean", "CT_GULF_CARIBBEAN"),
+    "ct_namer":  _ct("namer", "Cloud tops, North America", "CT_NORTH_AMERICA"),
+    "ct_globe":  _ct("globe", "Cloud tops, full disk", "CT_FD_GLOBE"),
+})
 FOG_AGE = dt.timedelta(minutes=35)   # channels are staggered by ~30 min in the broadcast; fog moves slowly
 
 OUTLINE = dict(stroke_width=2, stroke_fill=(0, 0, 0, 200))
@@ -312,13 +323,23 @@ def fog_rgb(bt, box, f):
 # C08 (6.2 um) brightness temperature -> color: cold/moist upper air white and blue, dry air warm orange
 _WV_STOPS = [(200, (250, 250, 255)), (212, (120, 235, 255)), (226, (40, 140, 235)), (240, (30, 60, 130)),
              (250, (70, 75, 95)), (258, (125, 120, 120)), (266, (200, 160, 105)), (276, (240, 135, 45))]
-_WV_LUT = np.stack([np.interp(np.linspace(200, 276, 512), [k for k, _ in _WV_STOPS], [c[i] for _, c in _WV_STOPS])
-                    for i in range(3)], axis=-1).astype(np.float32) / 255.0
+# C13 (10.3 um) brightness temperature -> color: warm surface/low cloud gray, then cold tops cyan, blue, green,
+# yellow, red, magenta, white as they get colder (roughly -30 C ... -80 C), the usual convection enhancement
+_CT_STOPS = [(185, (255, 255, 255)), (193, (255, 60, 220)), (203, (240, 40, 30)), (213, (255, 235, 40)),
+             (223, (40, 220, 90)), (233, (30, 90, 255)), (243, (0, 220, 255)), (255, (245, 245, 245)),
+             (270, (190, 190, 190)), (283, (90, 90, 90)), (300, (15, 15, 15))]
+_BT_LUTS = {}
+_BT_RANGE = {"wv": (200.0, 276.0, _WV_STOPS), "ct": (185.0, 300.0, _CT_STOPS)}
 
 
-def wv_rgb(bt8, disc):
-    idx = np.clip((bt8 - 200.0) / 76.0 * 511, 0, 511).astype(np.int32)
-    return np.where(disc[..., None], _WV_LUT[idx], 0.0)
+def bt_rgb(bt, disc, kind):
+    lo, hi, stops = _BT_RANGE[kind]
+    if kind not in _BT_LUTS:
+        xs = [k for k, _ in stops]
+        _BT_LUTS[kind] = np.stack([np.interp(np.linspace(lo, hi, 512), xs, [c[i] for _, c in stops])
+                                   for i in range(3)], axis=-1).astype(np.float32) / 255.0
+    idx = np.clip((bt - lo) / (hi - lo) * 511, 0, 511).astype(np.int32)
+    return np.where(disc[..., None], _BT_LUTS[kind][idx], 0.0)
 
 
 _MASKS = {}
@@ -462,9 +483,12 @@ def draw_cities(draw, max_rank, box, f, scale, size, fs):
         x, y = (c[0] - c0 + 0.5) / f * scale, (r[0] - r0 + 0.5) / f * scale
         if not vis[0] or not (6 <= x < size[0] - 6 and 6 <= y < size[1] - 6):
             continue
-        if any(abs(x - px) < gap * 1.5 and abs(y - py) < gap * 0.45 for px, py in placed):
+        wid = len(name) * fs * 0.5 + 14
+        if x < size[0] * 0.34 and y < fs * 3.6:
+            continue                                  # keep the title block clear
+        if any(abs(y - py) < fs * 1.1 and x < px + pw and px < x + wid for px, py, pw in placed):
             continue
-        placed.append((x, y))
+        placed.append((x, y, wid))
         draw.ellipse((x - 2.5, y - 2.5, x + 2.5, y + 2.5), fill=(255, 255, 255, 230), outline=(0, 0, 0, 200))
         draw.text((x + 6, y - fs * 0.4), name, fill=(240, 244, 250, 235), font=font, **OUTLINE)
 
@@ -635,17 +659,16 @@ def has_night(spec, t):
 def build_scan(t, files, wanted):
     """Load the channels for scan time t once, then render every wanted view."""
     chans = {}
-    need_ir = [k for k in wanted if not REGIONS[k].get("wv")]
+    need_ir = [k for k in wanted if not REGIONS[k].get("bt")]
     for c in ("13", "02", "01", "03"):
         p = nearest(files, c, t) if need_ir else None
         if p:
             chans[c] = load_full(p)
-    if need_ir and "13" not in chans:
-        wanted = [k for k in wanted if REGIONS[k].get("wv")]
-    wvp = nearest(files, "08", t)
-    wvbt = None
-    if any(REGIONS[k].get("wv") for k in wanted) and wvp and bt_table(wvp) is not None:
-        wvbt = (load_full(wvp), bt_table(wvp))
+    bts = {}     # channel -> (full array, table) for the single-channel colour views
+    for ch in {REGIONS[k]["bt"][0] for k in wanted if REGIONS[k].get("bt")}:
+        p = nearest(files, ch, t)
+        if p and bt_table(p) is not None:
+            bts[ch] = (load_full(p), bt_table(p))
     bt = None
     if any(REGIONS[k].get("night") == "fog" for k in wanted):
         fi = fog_inputs(files, t)
@@ -655,15 +678,17 @@ def build_scan(t, files, wanted):
         spec = REGIONS[key]
         if spec.get("night") == "fog" and bt is None:
             continue
-        if spec.get("wv") and wvbt is None:
+        if spec.get("bt") and spec["bt"][0] not in bts:
             continue
-        if not spec.get("wv") and "13" not in chans:
+        if not spec.get("bt") and "13" not in chans:
             continue
         box = region_box(spec["bbox"], spec["f"])
         geo = geometry(key, spec, box)
-        if spec.get("wv"):
-            rgb = wv_rgb(window_bt(wvbt[0], wvbt[1], box, spec["f"]), geo["disc"])
-            mode = "water vapor 6.2 um: white/blue = moist upper air, orange = dry"
+        if spec.get("bt"):
+            ch, kind = spec["bt"]
+            rgb = bt_rgb(window_bt(bts[ch][0], bts[ch][1], box, spec["f"]), geo["disc"], kind)
+            mode = ("water vapor 6.2 um: white/blue = moist upper air, orange = dry" if kind == "wv" else
+                    "cloud-top temperature: gray = warm, cyan to red to magenta = colder, strong storms")
         else:
             rgb, mode = compose(chans, box, spec["f"], t, geo, bt if spec.get("night") == "fog" else None)
         img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
@@ -699,7 +724,7 @@ def main():
     for t, _p in reversed(files["13"]):
         todo = [k for k in a.views if (a.force or not out_path(k, REGIONS[k], t).exists())
                 and (REGIONS[k].get("night") != "fog" or (fog_inputs(files, t) and has_night(REGIONS[k], t)))
-                and (not REGIONS[k].get("wv") or nearest(files, "08", t))]
+                and (not REGIONS[k].get("bt") or nearest(files, REGIONS[k]["bt"][0], t))]
         if not todo:
             continue
         build_scan(t, files, todo)
