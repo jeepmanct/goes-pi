@@ -64,6 +64,28 @@ def build(view, year, month, out_dir=ARCHIVE, width=1280, fps=15, max_frames=720
     return dest
 
 
+def make_clip(view, lo, hi, dest, width=960, fps=2, min_frames=4, digest=None):
+    """Short video of one view between two datetimes (tz-aware), written to dest. None if too little footage."""
+    d = digest or _digest()
+    fr = [(t, p) for t, p in d.frames(view) if lo <= t <= hi]
+    if len(fr) < min_frames or dest.exists():
+        return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="goes-clip-") as td:
+        lst, tmp = Path(td) / "frames.txt", dest.with_name(dest.name + ".part.mp4")
+        last = fr[-1][1]
+        lst.write_text("".join(f"file '{p}'\nduration {1 / fps:.3f}\n" for _t, p in fr) + f"file '{last}'\nduration 2\nfile '{last}'\n")
+        r = subprocess.run(["nice", "-n", "15", "ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+                            "-vf", f"scale={width}:-2:flags=lanczos,format=yuv420p", "-r", "12", "-c:v", "libx264", "-preset", "veryfast",
+                            "-crf", "24", "-movflags", "+faststart", str(tmp)], capture_output=True, text=True, timeout=900)
+        if r.returncode:
+            tmp.unlink(missing_ok=True)
+            print("clip failed:", r.stderr.strip()[-200:], file=sys.stderr)
+            return None
+        tmp.replace(dest)
+    return dest
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--month", help="YYYY-MM (default: the previous month)")

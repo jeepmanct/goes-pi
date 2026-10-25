@@ -62,6 +62,7 @@ PASSWORD_FILE = WEB_DIR / "password.txt"
 RECV_CONF = GOES_DIR / "goesrecv.conf"
 PROC_CONF = GOES_DIR / "goesproc.conf"
 PANEL_STARTED = time.time()
+_pf_cache = {}
 PORT = int(os.environ.get("GOES_UI_PORT", "8080"))
 CERT = Path(os.environ.get("GOES_UI_CERT", WEB_DIR / "tls" / "fullchain.pem"))
 KEY = Path(os.environ.get("GOES_UI_KEY", WEB_DIR / "tls" / "privkey.pem"))
@@ -871,8 +872,18 @@ class Handler(BaseHTTPRequestHandler):
                                        "local": products.active_alerts(zones=[local.HOME["zone"], local.HOME["marine"]])})
             if u.path == "/api/skywarn":
                 return self.send_json(skywarn.summary())
+            if u.path == "/api/notify":
+                return self.send_json({"log": watch.notification_log(100), "settings": watch.notify_settings(),
+                                       "categories": [{"id": c[0], "label": c[1], "desc": c[2]} for c in watch.NOTIFY_CATEGORIES]})
             if u.path == "/api/outages":
                 return self.send_json({"outages": watch.outages(min(max(int(q.get("days", ["14"])[0]), 1), 14))})
+            if u.path == "/api/pointforecast":
+                hit = _pf_cache.get("p")
+                if not hit or time.time() - hit[0] > 300:
+                    _pf_cache["p"] = hit = (time.time(), local.point_forecast())
+                return self.send_json(hit[1] or {"points": []})
+            if u.path == "/api/weather/history":
+                return self.send_json(local.weather_history(min(max(int(q.get("hours", ["72"])[0]), 6), 336)))
             if u.path == "/api/local":
                 return self.send_json(local.summary())
             if u.path == "/api/mail":
@@ -1001,6 +1012,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"result": "no new matching warnings in the feed right now"
                                            if not hits else "; ".join(f"{n} ({o})" for n, o, _ in hits)})
                 raise ValueError("unknown test")
+            if path == "/api/notify/settings":
+                return self.send_json({"settings": watch.save_notify_settings(body)})
+            if path == "/api/notify/test":
+                ok = watch.push_only("GOES: test notification", "If you can read this, phone alerts are working.",
+                                     priority="default", tags="white_check_mark", category="test")
+                return self.send_json({"result": "sent" if ok else "not sent: check the ntfy topic in the Mail tab"})
             if path == "/api/sdrtest":
                 return self.send_json(sdr_check())
             if path == "/api/webui/restart":

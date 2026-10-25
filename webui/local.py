@@ -4,6 +4,7 @@ Current weather from the Bridgeport (KBDR) METAR, its airport forecast (TAF), th
 the Long Island Sound West marine forecast, and space-weather bulletins. Read-only; everything is parsed from files
 already on disk. Needs the products module (shared with the panel through sys.modules["goes_products"]).
 """
+import datetime as dt
 import importlib.util
 import json
 import re
@@ -272,6 +273,119 @@ def zone_product(cat, site_prefix, zone):
             if periods:
                 return {"t": r["t"], "name": name.strip(" -"), "issued": issued, "headlines": heads, "periods": periods}
     return None
+
+
+# ---- point forecast (PFM) and weather history ------------------------------------------------------------
+
+SKY_PFM = {"CL": "Clear", "FW": "Few clouds", "SC": "Scattered", "B1": "Broken", "B2": "Broken", "BK": "Broken", "OV": "Overcast",
+           "MC": "Mostly cloudy", "PC": "Partly cloudy"}
+ET = {"EDT": -4, "EST": -5}
+
+
+def _pfm_block(text, zone):
+    """Lines of the point-forecast block whose UGC line names the zone."""
+    p = _products()
+    for block in text.split("$$"):
+        if zone in p.ugc_zones(block):
+            return block.replace("\r", "").splitlines()
+    return None
+
+
+def _row_tokens(lines, label, n):
+    for ln in lines:
+        if ln.startswith(label):
+            toks = ln[len(label):].split()
+            return toks[:n] if len(toks) >= n else None
+    return None
+
+
+def _slots(line, label, n, first=13, width=3):
+    """{slot: token} for sparse fixed-width rows (PoP, QPF, Snow), where slot = column index."""
+    out = {}
+    for m in re.finditer(r"\S+", line[len(label):]):
+        pos = len(label) + m.start()
+        i = (pos - first) // width
+        if 0 <= i < n:
+            out[i] = m.group(0)
+    return out
+
+
+def point_forecast(zone=None):
+    """3-hourly (then 6-hourly) forecast for the home point from the PFM bulletin: list of dicts with t, temp, dew,
+    wind_dir, wind_mph, sky, pop, plus the point's name and issue time. None if no bulletin."""
+    zone = zone or HOME["zone"]
+    for r in _newest("PFM", HOME["office"], n=6, hours=30):
+        try:
+            text = _text(r["name"])
+        except OSError:
+            continue
+        lines = _pfm_block(text, zone)
+        if not lines:
+            continue
+        name = next((ln.strip() for ln in lines if re.search(r"-\w.* [A-Z]{2}$", ln.strip())), "")
+        hdr = next((ln for ln in lines if re.search(r"\d{3,4} [AP]M [EC][SD]T", ln)), "")
+        tz = ET.get(re.search(r"\b([EC][SD]T)\b", hdr).group(1), -4) if hdr else -4
+        points = []
+        for sect in ("3hrly", "6hrly"):
+            idx = next((i for i, ln in enumerate(lines) if ln.startswith("EDT " + sect) or ln.startswith("EST " + sect)), None)
+            if idx is None:
+                continue
+            hours = [int(h) for h in lines[idx].split()[2:]]
+            n = len(hours)
+            date_line = lines[idx - 1]
+            md = re.findall(r"(\d{1,2})/(\d{1,2})(?:/(\d{2}))?", date_line)
+            if not md:
+                continue
+            mo, da, yy = md[0]
+            year = 2000 + int(yy) if yy else dt.datetime.now().year
+            t0 = dt.datetime(year, int(mo), int(da), hours[0], tzinfo=dt.timezone.utc).timestamp() - tz * 3600
+            step = 3 * 3600 if sect == "3hrly" else 6 * 3600
+            block = lines[idx:]
+            temp, dew = _row_tokens(block, "Temp", n), _row_tokens(block, "Dewpt", n)
+            wd, ws = _row_tokens(block, "Wind dir", n) or _row_tokens(block, "PWind dir", n), _row_tokens(block, "Wind spd", n)
+            sky = _row_tokens(block, "Clouds", n) or _row_tokens(block, "Avg clouds", n)
+            pop_line = next((ln for ln in block if ln.startswith("PoP 12hr")), "")
+            pops = _slots(pop_line, "PoP 12hr", n)
+            for i in range(n):
+                try:
+                    tv = int(temp[i]) if temp else None
+                except ValueError:
+                    tv = None
+                points.append({"t": t0 + i * step, "temp": tv,
+                               "dew": int(dew[i]) if dew and dew[i].lstrip("-").isdigit() else None,
+                               "wind_dir": wd[i] if wd else None,
+                               "wind_mph": int(ws[i]) if ws and ws[i].isdigit() else None,
+                               "sky": SKY_PFM.get(sky[i], sky[i]) if sky else None,
+                               "pop": int(pops[i]) if i in pops and pops[i].isdigit() else None, "step_h": step // 3600})
+        if points:
+            points = [pt for pt in points if pt["t"] >= time.time() - 3 * 3600]
+            seen, uniq = set(), []
+            for pt in sorted(points, key=lambda x: x["t"]):
+                if pt["t"] not in seen:
+                    seen.add(pt["t"])
+                    uniq.append(pt)
+            return {"name": name, "issued": hdr.strip(), "t": r["t"], "points": uniq}
+    return None
+
+
+def weather_history(hours=72):
+    """Observation series from the rolling KBDR log, oldest first, with a 3-hour pressure tendency."""
+    obs = metars(hours=hours)
+    pts = [{"t": o["t"], "temp": o.get("temp_f"), "dew": o.get("dew_f"), "wind": o.get("wind_kt"), "gust": o.get("gust_kt"),
+            "press": o.get("pressure_inhg")} for o in reversed(obs)]
+    tend = None
+    pr = [(p["t"], p["press"]) for p in pts if p["press"] is not None]
+    if len(pr) >= 2:
+        now_t, now_p = pr[-1]
+        past = [x for x in pr if abs(x[0] - (now_t - 3 * 3600)) <= 50 * 60]
+        if past:
+            d = now_p - min(past, key=lambda x: abs(x[0] - (now_t - 3 * 3600)))[1]
+            a = abs(d)
+            word = "steady" if a < 0.02 else ("slowly " if a < 0.06 else "quickly " if a >= 0.10 else "") + ("rising" if d > 0 else "falling")
+            if a >= 0.02 and a < 0.10 and a >= 0.06:
+                word = ("rising" if d > 0 else "falling")
+            tend = {"change_inhg": round(d, 2), "text": word.strip()}
+    return {"points": pts, "tendency": tend}
 
 
 # ---- space weather -------------------------------------------------------------------------------

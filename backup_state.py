@@ -27,7 +27,7 @@ FILES = [          # relative to ~/goes; missing ones are skipped
     "webui/password.txt", "mail-password.txt", "mail.conf", "share-token.txt", "share-tokens.json", "share-visits.json",
     "signal-history.jsonl", "pi-history.jsonl", "metar-kbdr.jsonl", "keep-offices.txt", "storm.json",
     ".digest-sent", ".digest-failed", ".digest-skipnote", ".digest-weekly-sent", ".alerts-seen",
-    ".storm-announced", ".health-sent", ".bestimage-sent", ".skywarn-state.json", "goesrecv.conf", "goesproc.conf",
+    ".storm-announced", ".health-sent", ".bestimage-sent", ".skywarn-state.json", "notify-settings.json", "notify-log.jsonl", "disk-history.jsonl", "goesrecv.conf", "goesproc.conf",
 ]
 DIRS = ["webui/tls"]                      # TLS certificates, if any
 EXTRA = ["/etc/systemd/system/goes-webui.service"]

@@ -189,6 +189,60 @@ def _freq_mhz(core=0):
     return int(f) / 1000 if f.isdigit() else None
 
 
+DATA_DIR = Path.home() / "goes" / "data"
+DISK_LOG = Path.home() / "goes" / "disk-history.jsonl"       # hourly used-bytes samples of the data drive
+DISK_CAP = 900 * 1000 ** 3                                     # the cleanup script's size cap
+_disk_last = [0.0]
+
+
+def _disk_track(now):
+    """Append an hourly used-bytes sample of the data drive; keep ~200 days."""
+    if now - _disk_last[0] < 3600:
+        return
+    _disk_last[0] = now
+    try:
+        used = shutil.disk_usage(DATA_DIR).used
+        with DISK_LOG.open("a") as f:
+            f.write(json.dumps({"t": round(now), "used": used}) + "\n")
+        if DISK_LOG.stat().st_size > 400_000:
+            rows = DISK_LOG.read_text().splitlines()[-4800:]
+            DISK_LOG.write_text("\n".join(rows) + "\n")
+    except OSError:
+        pass
+
+
+def disk_outlook(now=None):
+    """Growth of the data drive over up to 14 days and a rough time to the cleanup cap, or None while collecting."""
+    now = now or time.time()
+    try:
+        rows = [json.loads(ln) for ln in DISK_LOG.read_text().splitlines()[-1500:]]
+    except (OSError, ValueError):
+        return None
+    rows = [r for r in rows if r["t"] >= now - 14 * 86400]
+    if len(rows) < 2 or rows[-1]["t"] - rows[0]["t"] < 20 * 3600:
+        return None
+    days = (rows[-1]["t"] - rows[0]["t"]) / 86400
+    per_day = (rows[-1]["used"] - rows[0]["used"]) / days
+    left = DISK_CAP - rows[-1]["used"]
+    return {"used": rows[-1]["used"], "per_day": per_day, "days_to_cap": (left / per_day) if per_day > 1e6 and left > 0 else None,
+            "span_days": days}
+
+
+def _updates():
+    """Package updates waiting, from apt's local lists (not refreshed here). None if apt is unavailable."""
+    try:
+        r = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = [ln for ln in r.stdout.splitlines() if "upgradable" in ln]
+    try:
+        age_h = (time.time() - max(p.stat().st_mtime for p in Path("/var/lib/apt/lists").iterdir())) / 3600
+    except (OSError, ValueError):
+        age_h = None
+    return {"count": len(lines), "security": sum(1 for ln in lines if "security" in ln.split("[")[0]),
+            "lists_age_h": age_h, "t": time.time()}
+
+
 def _sd_written():
     """Bytes written to the SD card since boot (field 7 of /sys/block/mmcblk0/stat is 512-byte sectors written)."""
     try:
@@ -222,6 +276,10 @@ def _sampler():
             top.sort(key=lambda p: (p["cpu"], p["rss"]), reverse=True)
             if now - slow["t"] > 30:
                 slow.update(throttle=_throttle(), ips=_ips(), t=now)
+                _disk_track(now)
+                slow["disk_outlook"] = disk_outlook(now)
+            if now - slow.get("upd_t", 0) > 6 * 3600:
+                slow.update(updates=_updates(), upd_t=now)
             m = _meminfo()
             avail, total = m.get("MemAvailable", 0), m.get("MemTotal", 1)
             live = {
@@ -231,6 +289,7 @@ def _sampler():
                         "swap_total": m.get("SwapTotal", 0), "swap_used": m.get("SwapTotal", 0) - m.get("SwapFree", 0)},
                 "disks": _disks(), "net": rates, "ips": slow["ips"], "throttle": slow["throttle"],
                 "procs": len(procs), "top": top[:8], "sd_written": _sd_written(),
+                "updates": slow.get("updates"), "disk_outlook": slow.get("disk_outlook"),
             }
             with _lock:
                 _live.clear()

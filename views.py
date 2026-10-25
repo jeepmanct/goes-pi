@@ -714,6 +714,122 @@ def build_scan(t, files, wanted):
         print(f"wrote {dest.relative_to(DATA)} ({mode})", flush=True)
 
 
+# ---- mesoscale sectors (1-minute IR over a moving box) -----------------------------------------------------
+
+MESO_RE = re.compile(r"CMIPM([12])-M\dC13_G19_s(\d{4})(\d{3})(\d{2})(\d{2})(\d{2})")
+MESO_KEEP_DAYS = 3
+_NUM = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
+def meso_geometry(sidecar):
+    """(x_add, x_scale, y_add, y_scale) fixed-grid offsets from a goesproc sidecar, or None."""
+    try:
+        j = json.loads(sidecar.read_text())
+    except (OSError, ValueError):
+        return None
+    found = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in ("x_add_offset", "x_scale_factor", "y_add_offset", "y_scale_factor") and k not in found:
+                    m = _NUM.search(str(v))
+                    if m:
+                        found[k] = float(m.group(0))
+                walk(v)
+    walk(j)
+    keys = ("x_add_offset", "x_scale_factor", "y_add_offset", "y_scale_factor")
+    return tuple(found[k] for k in keys) if all(k in found for k in keys) else None
+
+
+def meso_to_pixels(lat, lon, geo):
+    """lat/lon -> (col, row, visible) in a mesoscale image described by geo."""
+    xa, xs, ya, ys = geo
+    c, r, vis = to_pixels(lat, lon)
+    x, y = X0 + c * STEP, -X0 - r * STEP          # scan angles of the point
+    return (x - xa) / xs, (y - ya) / ys, vis
+
+
+def meso_center(geo, w, h):
+    """Approximate lat/lon of the sector centre (for the label), or None."""
+    xa, xs, ya, ys = geo
+    c, r = (xa + xs * w / 2 - X0) / STEP, (-X0 - (ya + ys * h / 2)) / STEP
+    lat, lon, ok = grid_latlon((int(r), int(r) + 1, int(c), int(c) + 1), 1)
+    return (math.degrees(float(lat[0, 0])), math.degrees(float(lon[0, 0]))) if ok[0, 0] else None
+
+
+def render_meso(png, sidecar, t, k, scale=2):
+    geo = meso_geometry(sidecar)
+    table = bt_table(png)
+    if geo is None or table is None:
+        return None
+    a = np.asarray(Image.open(png).convert("L"), dtype=np.uint8)
+    h, w = a.shape
+    bt = table[a]
+    disc = np.ones(a.shape, bool)
+    rgb = bt_rgb(bt, disc, "ct")
+    img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)).resize((w * scale, h * scale), Image.LANCZOS).convert("RGBA")
+    ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+    fs, font = font_for(img.width)
+    for kind, col in (("admin_1_states_provinces_lines", (255, 255, 255, 90)), ("admin_0_boundary_lines_land", (255, 235, 140, 160)),
+                      ("coastline", (255, 235, 140, 170))):
+        for ln in lines(kind):
+            if ln[:, 1].max() < -140 or ln[:, 1].min() > 20:        # quick reject: far from the Americas
+                continue
+            c, r, vis = meso_to_pixels(ln[:, 1], ln[:, 0], geo)
+            pts = list(zip((c * scale).tolist(), (r * scale).tolist()))
+            for i in range(len(pts) - 1):
+                if vis[i] and vis[i + 1] and -50 < pts[i][0] < img.width + 50 and -50 < pts[i][1] < img.height + 50:
+                    d.line((pts[i], pts[i + 1]), fill=col, width=1)
+    cen = meso_center(geo, w, h)
+    local = t.astimezone(LOCAL)
+    d.text((14, 12), f"GOES-19  Mesoscale {k}, cloud tops", fill=(235, 240, 250, 255), font=font, **OUTLINE)
+    d.text((14, 12 + fs * 1.4), f"{t:%Y-%m-%d %H:%M:%S} UTC  ·  {local:%-I:%M %p %Z}", fill=(215, 225, 240, 255), font=font, **OUTLINE)
+    if cen:
+        d.text((14, img.height - 12 - fs * 1.3), f"centre {abs(cen[0]):.1f}{'N' if cen[0] >= 0 else 'S'} {abs(cen[1]):.1f}{'W' if cen[1] < 0 else 'E'}"
+               "  ·  gray = warm, cyan to red to magenta = colder", fill=(190, 200, 215, 255), font=font, **OUTLINE)
+    return Image.alpha_composite(img, ov).convert("RGB")
+
+
+def build_meso(max_frames=150):
+    """Render new mesoscale C13 frames that have a sidecar into data/goes19/meso1|meso2/DATE/*.jpg; drop old ones."""
+    done = 0
+    cut = time.time() - MESO_KEEP_DAYS * 86400
+    found = []
+    for k in (1, 2):
+        for png in (DATA / f"m{k}").rglob("*C13*.png"):
+            m = MESO_RE.search(png.name)
+            if not m or not png.with_suffix(".json").exists():
+                continue
+            y, doy, hh, mm, ss = map(int, m.groups()[1:])
+            t = dt.datetime(y, 1, 1, hh, mm, ss, tzinfo=dt.timezone.utc) + dt.timedelta(days=doy - 1)
+            if t.timestamp() >= cut:
+                found.append((t, k, png))
+    for t, k, png in sorted(found, reverse=True):
+        dest = DATA / f"meso{k}" / f"{t:%Y-%m-%d}" / f"GOES19_MESO{k}_{t:%Y%m%dT%H%M%S}Z.jpg"
+        if dest.exists():
+            continue
+        img = render_meso(png, png.with_suffix(".json"), t, k)
+        if img is None:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".tmp.jpg")
+        img.save(tmp, "JPEG", quality=85)
+        tmp.rename(dest)
+        done += 1
+        if done >= max_frames:
+            break
+    for k in (1, 2):                              # keep only a few days of these (there are many)
+        for p in (DATA / f"meso{k}").rglob("*.jpg"):
+            if p.stat().st_mtime < cut:
+                p.unlink(missing_ok=True)
+        for dday in (DATA / f"meso{k}").glob("*"):
+            if dday.is_dir() and not any(dday.iterdir()):
+                dday.rmdir()
+    return done
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="rebuild even if outputs exist")
@@ -742,6 +858,12 @@ def main():
         done += 1
         if done >= a.max:
             break
+    try:
+        n = build_meso()
+        if n:
+            print(f"wrote {n} mesoscale frames", flush=True)
+    except Exception as e:                         # never let the extra sectors stop the main views
+        print("mesoscale error:", e, flush=True)
     return 0
 
 

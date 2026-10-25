@@ -62,6 +62,10 @@ def _config():
 
 def notify(subject, body, key=None, every=6 * 3600):
     """Email the alert recipients. key+every rate-limits repeats of the same alert."""
+    cat = "nws" if subject.startswith("NWS:") else "system"
+    if not notify_settings()["enabled"].get(cat, True):
+        log_notification(subject, body, "email", cat, False, "switched off")
+        return False
     now = time.monotonic()
     with _lock:
         if key and key in _alerts and now - _alerts[key] < every:
@@ -87,6 +91,7 @@ def notify(subject, body, key=None, every=6 * 3600):
         except Exception as e:
             print("push error:", e, flush=True)
         print("alert sent:", subject, flush=True)
+        log_notification(subject, body, "email + push", cat, True)
         return True
     except Exception as e:  # never let mail trouble kill the monitor
         print("alert failed:", subject, "-", e, flush=True)
@@ -392,8 +397,119 @@ def trend_problem(tr):
     return None
 
 
-def push_only(title, body, key=None, every=24 * 3600, priority="default", tags="bar_chart"):
-    """ntfy push to the owner's phone, rate-limited like notify(). Returns True if sent."""
+NOTIFY_LOG = GOES_DIR / "notify-log.jsonl"
+NOTIFY_SETTINGS = GOES_DIR / "notify-settings.json"
+NOTIFY_CATEGORIES = [      # id, label, what it covers
+    ("skywarn", "Skywarn warnings and watches", "New tornado, severe thunderstorm, flash flood, tropical, coastal, wind and winter warnings or watches for Connecticut"),
+    ("spotter", "Spotter activation changes", "When a weather office says spotters may be, or are, needed (and when that ends)"),
+    ("coldtops", "Cold cloud tops near Stratford", "Very cold cloud tops that can mean strong thunderstorms"),
+    ("dish", "Snow or ice on the dish", "Signal dropped while it is cold and precipitating at Bridgeport"),
+    ("trend", "Signal quality trend", "Signal clearly worse than the week before"),
+    ("health", "Daily health summary", "One short summary of signal, disk and Pi health each morning"),
+    ("image", "Daily best image", "The clearest Stratford picture of the day"),
+    ("space", "Geomagnetic storms", "K-index 6 or higher"),
+    ("storm", "New tropical storm", "When a storm appears for the Storm view"),
+    ("power", "Pi power problems", "Under-voltage reports"),
+    ("backup", "Backup problems", "The weekly state backup failed"),
+    ("monthly", "Monthly time-lapse ready", "When last month's video is saved"),
+    ("system", "Receiver and Pi alerts", "Signal lost, restarts, disk nearly full, overheating"),
+    ("nws", "NWS warnings for your office", "Warnings and watches from the offices set in the Mail tab"),
+]
+_nset = {"m": None, "d": {}}
+
+
+def notify_settings():
+    """{'enabled': {id: bool}, 'health_time': 'HH:MM', 'image_time': 'HH:MM'}; re-read when the file changes."""
+    try:
+        m = NOTIFY_SETTINGS.stat().st_mtime
+    except OSError:
+        m = None
+    if m != _nset["m"]:
+        try:
+            d = json.loads(NOTIFY_SETTINGS.read_text())
+        except (OSError, ValueError):
+            d = {}
+        _nset.update(m=m, d=d)
+    d = _nset["d"]
+    return {"enabled": {c[0]: bool(d.get("enabled", {}).get(c[0], True)) for c in NOTIFY_CATEGORIES},
+            "health_time": d.get("health_time", "07:30"), "image_time": d.get("image_time", "14:40")}
+
+
+def save_notify_settings(update):
+    """Validate and merge a settings update; returns the new settings."""
+    cur = notify_settings()
+    ids = {c[0] for c in NOTIFY_CATEGORIES}
+    for k, v in (update.get("enabled") or {}).items():
+        if k in ids:
+            cur["enabled"][k] = bool(v)
+    for k in ("health_time", "image_time"):
+        if k in update:
+            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(update[k])):
+                raise ValueError(f"{k} must look like 07:30")
+            cur[k] = str(update[k])
+    tmp = NOTIFY_SETTINGS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cur))
+    tmp.replace(NOTIFY_SETTINGS)
+    return notify_settings()
+
+
+def _hhmm(s):
+    h, m = s.split(":")
+    return int(h), int(m)
+
+
+def _category(title, key=None, tags=""):
+    k = key or ""
+    if title.startswith("SKYWARN"):
+        return "spotter" if "spotter" in title.lower() else "skywarn"
+    if k.startswith("trend"):
+        return "trend"
+    if k == "dish-ice":
+        return "dish"
+    if k == "coldtops":
+        return "coldtops"
+    if k.startswith("kidx"):
+        return "space"
+    if k == "undervolt":
+        return "power"
+    if k == "backup-fail":
+        return "backup"
+    if "daily health" in title.lower():
+        return "health"
+    if "time-lapse ready" in title:
+        return "monthly"
+    if tags == "cyclone":
+        return "storm"
+    if title.startswith("NWS:"):
+        return "nws"
+    return "system"
+
+
+def log_notification(title, body, priority, cat, sent, note=""):
+    try:
+        with NOTIFY_LOG.open("a") as f:
+            f.write(json.dumps({"t": round(time.time()), "title": title[:120], "body": body[:500], "priority": priority,
+                                "cat": cat, "sent": sent, "note": note}) + "\n")
+        if NOTIFY_LOG.stat().st_size > 600_000:
+            NOTIFY_LOG.write_text("\n".join(NOTIFY_LOG.read_text().splitlines()[-1500:]) + "\n")
+    except OSError:
+        pass
+
+
+def notification_log(limit=100):
+    try:
+        rows = [json.loads(ln) for ln in NOTIFY_LOG.read_text().splitlines()[-limit:]]
+    except (OSError, ValueError):
+        rows = []
+    return list(reversed(rows))
+
+
+def push_only(title, body, key=None, every=24 * 3600, priority="default", tags="bar_chart", category=None):
+    """ntfy push to the owner's phone, rate-limited like notify(), switchable per category, and logged. True if sent."""
+    cat = category or _category(title, key, tags)
+    if cat != "test" and not notify_settings()["enabled"].get(cat, True):
+        log_notification(title, body, priority, cat, False, "switched off")
+        return False
     now = time.monotonic()
     with _lock:
         if key and key in _alerts and now - _alerts[key] < every:
@@ -403,12 +519,15 @@ def push_only(title, body, key=None, every=24 * 3600, priority="default", tags="
     try:
         cfg = tomllib.loads(MAIL_CONF.read_text())
         if not cfg.get("alerts", {}).get("ntfy_topic"):
+            log_notification(title, body, priority, cat, False, "no ntfy topic set")
             return False
         _digest().push(cfg, title, body[:900], priority, tags)
         print("push sent:", title, flush=True)
+        log_notification(title, body, priority, cat, True)
         return True
     except Exception as e:
         print("push failed:", title, "-", e, flush=True)
+        log_notification(title, body, priority, cat, False, f"failed: {type(e).__name__}")
         return False
 
 
@@ -451,7 +570,7 @@ def _trend_loop():
             now = dt.datetime.now(local)
             today = f"{now:%Y-%m-%d}"
             done = HEALTH_SENT.read_text().strip() if HEALTH_SENT.exists() else ""
-            if done != today and (now.hour, now.minute) >= HEALTH_TIME and now.hour < 12:
+            if done != today and (now.hour, now.minute) >= _hhmm(notify_settings()["health_time"]) and now.hour < 12:
                 if push_only("GOES daily health", health_text()):
                     HEALTH_SENT.write_text(today)
         except Exception as e:
@@ -551,6 +670,49 @@ def cold_tops(now=None):
     return float(w.min()), int((w < 220.0).sum()), t
 
 
+STORM_CLIPS = GOES_DIR / ".storm-clips.json"        # alert times waiting for their clip
+CLIP_DIR = GOES_DIR / "data" / "archive" / "storms"
+
+
+def _queue_storm_clip(t):
+    try:
+        q = json.loads(STORM_CLIPS.read_text())
+    except (OSError, ValueError):
+        q = []
+    q.append(t)
+    STORM_CLIPS.write_text(json.dumps(q[-10:]))
+
+
+def storm_clips_check():
+    """Build clips for alerts that are 90+ minutes old (so the footage includes the event). Returns paths written."""
+    import importlib.util
+    from zoneinfo import ZoneInfo
+    try:
+        q = json.loads(STORM_CLIPS.read_text())
+    except (OSError, ValueError):
+        return []
+    now = time.time()
+    keep, made = [], []
+    spec = importlib.util.spec_from_file_location("goes_monthly", GOES_DIR / "monthly.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for t in q:
+        if now - t < 90 * 60:
+            keep.append(t)
+            continue
+        if now - t > 12 * 3600:
+            continue
+        lo = dt.datetime.fromtimestamp(t - 2 * 3600, dt.timezone.utc)
+        hi = dt.datetime.fromtimestamp(t + 90 * 60, dt.timezone.utc)
+        stamp = dt.datetime.fromtimestamp(t, ZoneInfo("America/New_York"))
+        dest = CLIP_DIR / f"stratford-cloudtops-{stamp:%Y%m%d-%H%M}.mp4"
+        p = mod.make_clip("ct_stratford", lo, hi, dest)
+        if p:
+            made.append(p)
+    STORM_CLIPS.write_text(json.dumps(keep))
+    return made
+
+
 def _convect_loop():
     time.sleep(300)
     while True:
@@ -558,16 +720,23 @@ def _convect_loop():
             got = cold_tops()
             if got and got[0] < COLD_TOP_K and got[1] >= COLD_PIXELS:
                 mn, n, t = got
-                push_only("GOES: cold cloud tops near Stratford",
+                if push_only("GOES: cold cloud tops near Stratford",
                           f"Cloud tops as cold as {mn:.0f} K ({mn - 273.15:.0f} C) over {n * 4} sq km near Stratford at "
                           f"{t:%H:%M} UTC. That can mean strong thunderstorms. Open Views, Cloud tops: Stratford & Sound.",
-                          key="coldtops", every=3 * 3600, priority="high", tags="cloud_with_lightning")
+                          key="coldtops", every=3 * 3600, priority="high", tags="cloud_with_lightning"):
+                    _queue_storm_clip(t.timestamp())
         except Exception as e:
             print("cold-tops error:", e, flush=True)
         try:
             storm_check()
         except Exception as e:
             print("storm check error:", e, flush=True)
+        try:
+            for p in storm_clips_check():
+                push_only("GOES: storm clip saved", f"Cloud-top clip of the event near Stratford is in Files under archive/storms: {p.name}",
+                          key="stormclip", every=3600, tags="movie_camera", category="coldtops")
+        except Exception as e:
+            print("storm clip error:", e, flush=True)
         time.sleep(900)
 
 
@@ -776,6 +945,9 @@ def best_image(now_local):
 
 def push_image(title, caption, path):
     """ntfy attachment push (public satellite imagery to the owner's own topic). Returns True if sent."""
+    if not notify_settings()["enabled"].get("image", True):
+        log_notification(title, caption, "default", "image", False, "switched off")
+        return False
     try:
         cfg = tomllib.loads(MAIL_CONF.read_text())
         a = cfg.get("alerts", {})
@@ -789,9 +961,11 @@ def push_image(title, caption, path):
                                      headers={"Filename": Path(path).name, "Title": title.encode("ascii", "replace").decode()[:120],
                                               "Message": caption[:300], "Tags": "earth_americas"})
         urllib.request.urlopen(req, timeout=60).read()
+        log_notification(title, caption + " (with picture)", "default", "image", True)
         return True
     except Exception as e:
         print("image push failed:", e, flush=True)
+        log_notification(title, caption, "default", "image", False, f"failed: {type(e).__name__}")
         return False
 
 
@@ -804,7 +978,7 @@ def _bestimage_loop():
             now = dt.datetime.now(local)
             today = f"{now:%Y-%m-%d}"
             done = BESTIMG_SENT.read_text().strip() if BESTIMG_SENT.exists() else ""
-            if done != today and (now.hour, now.minute) >= (14, 40) and now.hour < 18:
+            if done != today and (now.hour, now.minute) >= _hhmm(notify_settings()["image_time"]) and now.hour < 18:
                 got = best_image(now)
                 if got and push_image("Stratford from space today",
                                       f"GOES-19 at {got[1].astimezone(local):%-I:%M %p}, the clearest view of the day ({got[0] * 100:.0f}% cloud).", got[2]):

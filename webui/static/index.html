@@ -301,6 +301,10 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
         <option value="ct_stratford">Cloud tops: Stratford &amp; Sound</option>
         <option value="ct_globe">Cloud tops: Full disk</option>
       </optgroup>
+      <optgroup label="Mesoscale sectors (1-minute, move to follow weather)">
+        <option value="meso1">Mesoscale 1: cloud tops</option>
+        <option value="meso2">Mesoscale 2: cloud tops</option>
+      </optgroup>
       <optgroup label="Storm (only while an advisory is active)">
         <option value="storm">Storm-following view</option>
       </optgroup>
@@ -376,6 +380,21 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <div class="msg" id="loc-now2"></div>
     <div id="loc-body"></div>
   </div>
+  <div class="card" id="pf-card" style="display:none">
+    <h2 id="pf-title">Forecast for Bridgeport</h2>
+    <canvas id="pf-temp"></canvas>
+    <canvas id="pf-wind" style="height:110px;margin-top:6px"></canvas>
+    <div id="pf-table" style="margin-top:8px"></div>
+    <p class="msg" id="pf-note"></p>
+  </div>
+  <div class="card" id="wh-card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Recent weather at Bridgeport airport</h2>
+      <select id="wh-hours" style="width:auto"><option value="24">24 h</option><option value="72" selected>3 days</option><option value="168">7 days</option><option value="336">14 days</option></select></div>
+    <p class="msg" id="wh-tend"></p>
+    <canvas id="wh-temp"></canvas>
+    <canvas id="wh-press" style="height:110px;margin-top:6px"></canvas>
+    <canvas id="wh-wind" style="height:110px;margin-top:6px"></canvas>
+  </div>
   <div class="card">
     <div class="row">
       <select id="wx-cat" style="width:auto"><option value="">All products</option></select>
@@ -405,6 +424,23 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <div class="card"><h2>Severe weather outlook (SPC)</h2><div id="sk-out"></div></div>
   <div class="card"><h2>Tropical and coastal</h2><div id="sk-trop"></div></div>
   <p class="msg">From National Weather Service bulletins received over the satellite. Not an official warning source: use NOAA Weather Radio, the NWS website or your net control for anything safety critical.</p>
+</section>
+
+<section id="notify">
+  <div class="card">
+    <h2>Which alerts reach your phone</h2>
+    <div id="nt-list"></div>
+    <div class="row" style="margin-top:12px">
+      <label class="msg" style="margin:0">Daily health summary at <input type="time" id="nt-health" style="width:auto"></label>
+      <label class="msg" style="margin:0">Daily best image at <input type="time" id="nt-image" style="width:auto"></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="b" id="nt-save">Save</button>
+      <button class="b ghost" id="nt-test">Send test notification</button>
+    </div>
+    <p class="msg" id="nt-msg"></p>
+  </div>
+  <div class="card"><h2>Recent notifications</h2><div id="nt-log"></div></div>
 </section>
 
 <section id="charts">
@@ -499,7 +535,7 @@ const api = async (path, body) => {
 // Everyday tabs sit in the bar; the admin ones are in the More menu. Logs is hidden (its section and code are kept:
 // add ['logs','Logs'] to MORE to bring the tab back).
 const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['skywarn','Skywarn'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
-const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail']];
+const MORE = [['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -541,6 +577,7 @@ function show(id) {
   if (id === 'forecast') loadForecast();
   if (id === 'weather') loadWeather();
   if (id === 'skywarn') loadSkywarn();
+  if (id === 'notify') loadNotify();
   if (id === 'aim') renderSky();
   if (id === 'charts') loadCharts();
   if (id === 'signal') loadSignal();
@@ -947,6 +984,11 @@ function piRender(live) {
     piTile('Temperature', live.temp == null ? '–' : live.temp.toFixed(0) + ' °C', live.temp == null ? '' : (live.temp * 9 / 5 + 32).toFixed(0) + ' °F', live.temp == null ? '' : piColor(live.temp, 65, 78).replace('var(--accent)', '')),
     piTile('Load', live.load[0].toFixed(2), `5m ${live.load[1].toFixed(2)} · 15m ${live.load[2].toFixed(2)}`),
     piTile('Uptime', fmtUp(live.uptime), live.procs + ' processes'),
+    piTile('Updates', live.updates ? (live.updates.count ? live.updates.count + ' waiting' : 'Up to date') : '–',
+      live.updates ? (live.updates.security ? live.updates.security + ' security. ' : '') + (live.updates.lists_age_h > 168 ? 'Package list is ' + Math.round(live.updates.lists_age_h / 24) + ' days old' : 'Per the last package list') : 'not available',
+      live.updates && live.updates.security ? 'var(--warn)' : ''),
+    piTile('Data drive', live.disk_outlook ? '+' + fmtBytes(live.disk_outlook.per_day) + ' / day' : 'Measuring…',
+      live.disk_outlook ? fmtBytes(live.disk_outlook.used) + ' used' + (live.disk_outlook.days_to_cap ? ', about ' + Math.round(live.disk_outlook.days_to_cap) + ' days to the 900 GB cleanup limit' : '') : 'needs a day of samples'),
     piTile('SD card writes', live.sd_written == null ? '–' : fmtBytes(live.sd_written), live.sd_written == null || !live.uptime ? 'since boot' : 'since boot, about ' + fmtBytes(live.sd_written / live.uptime * 86400) + ' a day'),
     piTile('Power / throttle', th ? (bad ? 'Problem' : 'OK') : '–', th ? (bad ? th.now.join(', ') : th.past.length ? 'Earlier: ' + th.past.join(', ') : 'No issues since boot') : 'not available', bad ? 'var(--bad)' : th && !th.past.length ? 'var(--good)' : ''));
   $('#pi-cores').replaceChildren(...live.cores.map((c, i) => piRow('Core ' + i, c, c.toFixed(0) + '%', piColor(c, 70, 90))));
@@ -1257,6 +1299,66 @@ async function loadForecast() {
   });
 }
 
+// ---- small multi-line time chart (forecast and history charts)
+function lineChart(sel, series, o = {}) {
+  const cv = $(sel), dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w) return;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), col = c => css.getPropertyValue(c).trim() || c;
+  const all = series.flatMap(s => s.pts.filter(p => p[1] != null));
+  g.font = '11px sans-serif'; g.fillStyle = col('--muted');
+  if (!all.length) { g.fillText('No data yet', 8, 20); return; }
+  const t0 = Math.min(...all.map(p => p[0])), t1 = Math.max(...all.map(p => p[0]), t0 + 1);
+  let lo = o.lo ?? Math.min(...all.map(p => p[1])), hi = o.hi ?? Math.max(...all.map(p => p[1]));
+  if (o.lo == null) lo = Math.floor(lo - (hi - lo) * 0.08 - 0.001); if (o.hi == null) hi = Math.ceil(hi + 0.001);
+  if (hi === lo) hi = lo + 1;
+  const L = 36, T = 16, B = 16, x = t => L + (t - t0) / (t1 - t0) * (w - L - 6), y = v => h - B - (v - lo) / (hi - lo) * (h - B - T);
+  g.strokeStyle = col('--line'); g.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) { const v = lo + (hi - lo) * i / 2; g.beginPath(); g.moveTo(L, y(v)); g.lineTo(w, y(v)); g.stroke();
+    g.fillStyle = col('--muted'); g.fillText((o.dec ? v.toFixed(o.dec) : Math.round(v)) + '', 2, y(v) + 4); }
+  const span = t1 - t0, fmt = t => { const d = new Date(t * 1000); return (span > 86400 * 1.2 ? d.toLocaleDateString([], {weekday: 'short'}) + ' ' : '') + d.toLocaleTimeString([], {hour: 'numeric'}); };
+  g.fillStyle = col('--muted'); g.fillText(fmt(t0), L, h - 3); const lt = fmt(t1); g.fillText(lt, w - g.measureText(lt).width - 4, h - 3);
+  const now = Date.now() / 1000;
+  if (o.now && now > t0 && now < t1) { g.strokeStyle = col('--muted'); g.setLineDash([3, 3]); g.beginPath(); g.moveTo(x(now), T); g.lineTo(x(now), h - B); g.stroke(); g.setLineDash([]); }
+  let lx = L;
+  series.forEach(s => {
+    g.strokeStyle = col(s.color); g.fillStyle = col(s.color); g.lineWidth = 2; g.beginPath();
+    let prev = null;
+    s.pts.forEach(p => { if (p[1] == null) { prev = null; return; } prev == null || p[0] - prev > (o.gap || 1e9) ? g.moveTo(x(p[0]), y(p[1])) : g.lineTo(x(p[0]), y(p[1])); prev = p[0]; });
+    g.stroke(); g.fillText(s.label, lx, 11); lx += g.measureText(s.label).width + 14;
+  });
+}
+const wxHr = t => new Date(t * 1000).toLocaleTimeString([], {hour: 'numeric'});
+async function loadPointForecast() {
+  const r = await api('/api/pointforecast');
+  if (r.error || !r.points || !r.points.length) { $('#pf-card').style.display = 'none'; return; }
+  $('#pf-card').style.display = '';
+  $('#pf-title').textContent = 'Forecast for ' + r.name.replace(/-/g, ', ');
+  $('#pf-note').textContent = 'National Weather Service point forecast, ' + r.issued + '. Every 3 hours for the first days, then every 6.';
+  const pts = r.points;
+  lineChart('#pf-temp', [{label: 'Temp °F', color: '--warn', pts: pts.map(p => [p.t, p.temp])}, {label: 'Dew point', color: '--accent', pts: pts.map(p => [p.t, p.dew])}], {now: true});
+  lineChart('#pf-wind', [{label: 'Wind mph', color: '--good', pts: pts.map(p => [p.t, p.wind_mph])}], {now: true, lo: 0});
+  const tb = $('#pf-table'); tb.innerHTML = '';
+  const day = new Intl.DateTimeFormat([], {weekday: 'short'});
+  pts.filter(p => p.step_h === 3).slice(0, 10).forEach(p => {
+    const d = document.createElement('div'); d.style.cssText = 'display:flex;gap:10px;padding:4px 0;border-top:1px solid var(--line);font-size:14px';
+    const cells = [day.format(new Date(p.t * 1000)) + ' ' + wxHr(p.t), p.temp + '°', p.sky || '', (p.wind_dir || '') + ' ' + (p.wind_mph ?? '') + ' mph', p.pop != null ? 'Rain ' + p.pop + '%' : ''];
+    cells.forEach((c, i) => { const s = document.createElement('span'); s.textContent = c; s.style.flex = i === 2 ? '1.3' : '1'; d.append(s); });
+    tb.append(d);
+  });
+}
+async function loadWeatherHistory() {
+  const r = await api('/api/weather/history?hours=' + $('#wh-hours').value);
+  if (r.error) return;
+  const p = r.points, T = k => p.map(x => [x.t, x[k]]), gap = 3 * 3600;
+  $('#wh-tend').textContent = r.tendency ? `Pressure ${r.tendency.text} (${r.tendency.change_inhg > 0 ? '+' : ''}${r.tendency.change_inhg.toFixed(2)} inHg in 3 hours)` : '';
+  lineChart('#wh-temp', [{label: 'Temp °F', color: '--warn', pts: T('temp')}, {label: 'Dew point', color: '--accent', pts: T('dew')}], {gap});
+  lineChart('#wh-press', [{label: 'Pressure inHg', color: '--accent', pts: T('press')}], {gap, dec: 2});
+  lineChart('#wh-wind', [{label: 'Wind kt', color: '--good', pts: T('wind')}, {label: 'Gust', color: '--bad', pts: T('gust')}], {gap, lo: 0});
+}
+$('#wh-hours').onchange = loadWeatherHistory;
+
 // ---- weather products (EMWIN text bulletins)
 let wxOffset = 0, wxReady = false, wxMine = [];
 const wxFmt = t => new Date(t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
@@ -1271,7 +1373,7 @@ async function loadWeather() {
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
     wxSearch(true);
   }
-  loadWxAlerts(); loadLocal();
+  loadWxAlerts(); loadLocal(); loadPointForecast(); loadWeatherHistory();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
@@ -1447,6 +1549,42 @@ async function loadSkywarn() {
   if (t.coastal.length) t.coastal.forEach(a => skLine(tp, `${a.name}${a.ends ? ' until ' + wxFmt(a.ends) : ''}`, 'Coastal alert for Stratford:'));
   else skLine(tp, 'No coastal or marine alerts for Stratford or the western Sound.');
 }
+
+// ---- notifications: switches, times, history
+async function loadNotify() {
+  const r = await api('/api/notify');
+  if (r.error) { $('#nt-msg').textContent = r.error; return; }
+  const box = $('#nt-list'); box.innerHTML = '';
+  r.categories.forEach(c => {
+    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.dataset.cat = c.id; cb.checked = !!r.settings.enabled[c.id]; cb.style.cssText = 'width:auto;margin-top:4px';
+    const t = document.createElement('div'); const b = document.createElement('div'); b.style.fontWeight = '600'; b.textContent = c.label;
+    const d = document.createElement('div'); d.className = 'msg'; d.style.margin = '0'; d.textContent = c.desc; t.append(b, d); row.append(cb, t); box.append(row);
+  });
+  $('#nt-health').value = r.settings.health_time; $('#nt-image').value = r.settings.image_time;
+  const lg = $('#nt-log'); lg.innerHTML = '';
+  if (!r.log.length) { const p = document.createElement('p'); p.className = 'msg'; p.textContent = 'Nothing sent yet. Alerts appear here as they happen.'; lg.append(p); }
+  const label = Object.fromEntries(r.categories.map(c => [c.id, c.label]));
+  r.log.forEach(x => {
+    const d = document.createElement('div'); d.className = 'mrow'; d.style.display = 'block';
+    const h = document.createElement('div'); h.style.fontWeight = '600'; h.textContent = x.title;
+    const m = document.createElement('div'); m.className = 'msg'; m.style.margin = '2px 0';
+    m.textContent = new Date(x.t * 1000).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) +
+      ' · ' + (label[x.cat] || x.cat) + ' · ' + (x.sent ? 'sent' : 'not sent' + (x.note ? ' (' + x.note + ')' : ''));
+    d.append(h, m);
+    if (x.body) { const b = document.createElement('div'); b.style.cssText = 'font-size:14px;white-space:pre-wrap'; b.textContent = x.body.slice(0, 300); d.append(b); }
+    lg.append(d);
+  });
+}
+$('#nt-save').onclick = async () => {
+  const enabled = {}; document.querySelectorAll('#nt-list input[data-cat]').forEach(c => enabled[c.dataset.cat] = c.checked);
+  const r = await api('/api/notify/settings', {enabled, health_time: $('#nt-health').value, image_time: $('#nt-image').value});
+  $('#nt-msg').textContent = r.error ? r.error : 'Saved.';
+};
+$('#nt-test').onclick = async e => {
+  e.target.disabled = true; $('#nt-msg').textContent = 'Sending…';
+  const r = await api('/api/notify/test', {}); $('#nt-msg').textContent = r.result || r.error; e.target.disabled = false; loadNotify();
+};
 
 // ---- charts (EMWIN graphics: radar, warnings map, fronts...)
 let chFrames = [], chTimer = null, chReady = false;

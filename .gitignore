@@ -28,3 +28,7 @@ storm.json
 .health-sent
 .bestimage-sent
 .skywarn-state.json
+notify-log.jsonl
+notify-settings.json
+disk-history.jsonl
+.storm-clips.json
