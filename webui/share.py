@@ -25,8 +25,8 @@ VIEWS = {  # name -> label
     "eastus": "East Coast", "namer": "North America", "gulf": "Gulf of Mexico",
     "samer": "South America", "globe": "Full disk globe",
     "wv_namer": "Water vapor, North America", "wv_globe": "Water vapor, full disk",
-    "ct_stratford": "Cloud tops, Stratford and the Sound", "ct_northeast": "Cloud tops, Northeast US",
-    "fog_stratford": "Stratford fog (night)", "meso1": "Mesoscale 1: 1-minute cloud tops (last 1-2 hours)",
+    "ct_stratford": "Cloud tops, Stratford", "ct_northeast": "Cloud tops, Northeast US",
+    "fog_stratford": "Stratford fog (night)", "meso1": "Mesoscale 1 (1-minute)",
 }
 MESO_MAX = 60       # mesoscale frames are about a minute apart, so the player only gets the newest few
 HOURS = 24          # Views player + GIF window
@@ -300,6 +300,7 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #wx .al.bad{background:#da363322;border:1px solid #da3633}#wx #cbar{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
 #hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 4px}#hd h1{margin:0}
 #th{font-size:12px;padding:3px 11px;min-height:0;border-radius:99px;color:var(--mut)}
+#v,#gv{width:100%;max-width:100%;min-width:0;box-sizing:border-box;text-overflow:ellipsis}
 #gif{font-size:12px;padding:3px 11px;min-height:0;line-height:1.5;border-radius:99px;color:var(--mut)}#th.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 #tabs{overflow-x:auto}#tabs button{white-space:nowrap}
 </style></head><body><main><div id="hd"><h1>GOES-19 East satellite</h1><button id="th">How it works</button></div>
