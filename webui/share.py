@@ -21,7 +21,7 @@ LINKS_FILE = Path.home() / "goes" / "share-tokens.json"        # {"links": [{id,
 VISITS_FILE = Path.home() / "goes" / "share-visits.json"       # {id: {total, last, days: {YYYY-MM-DD: n}}}
 PORT = 8090
 VIEWS = {  # name -> label
-    "nyc": "New York City", "northeast": "Northeast US", "fog_northeast": "Northeast fog (night)",
+    "stratford": "Stratford and the Sound", "nyc": "New York City", "northeast": "Northeast US", "fog_northeast": "Northeast fog (night)",
     "eastus": "East Coast", "namer": "North America", "gulf": "Gulf of Mexico",
     "samer": "South America", "globe": "Full disk globe",
     "wv_namer": "Water vapor, North America", "wv_globe": "Water vapor, full disk",

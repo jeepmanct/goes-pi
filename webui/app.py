@@ -47,6 +47,9 @@ watch = _load("watch")
 share = _load("share")
 sysstats = _load("sysstats")
 products = _load("products")
+sys.modules["goes_products"] = products        # one shared product index for the panel, local.py and watch.py
+local = _load("local")
+sys.modules["goes_local"] = local
 HOME = Path.home()
 GOES_DIR = HOME / "goes"
 DATA_DIR = GOES_DIR / "data"
@@ -855,7 +858,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(products.product(q.get("name", [""])[0]))
             if u.path == "/api/alerts/active":
                 offs = [o for o in q.get("office", [""])[0].split(",") if o.strip()]
-                return self.send_json({"alerts": products.active_alerts(offs or None)})
+                return self.send_json({"alerts": products.active_alerts(offs or None),
+                                       "local": products.active_alerts(zones=[local.HOME["zone"], local.HOME["marine"]])})
+            if u.path == "/api/outages":
+                return self.send_json({"outages": watch.outages(min(max(int(q.get("days", ["14"])[0]), 1), 14))})
+            if u.path == "/api/local":
+                return self.send_json(local.summary())
             if u.path == "/api/mail":
                 return self.send_json(mail_status())
             if u.path == "/api/history":
@@ -1007,7 +1015,7 @@ if __name__ == "__main__":
                                      do_handshake_on_connect=False)
     watch.start(PROCS, external_pids)
     sysstats.start()
-    threading.Thread(target=products.charts, daemon=True).start()     # warm the product index so the first Charts/Weather open is quick
+    threading.Thread(target=lambda: (products.charts(), local.summary()), daemon=True).start()     # warm the product index so the first Charts/Weather open is quick
     threading.Thread(target=prewarm_thumbs, daemon=True).start()
     try:
         share.start(lambda v: digest_module().frames(v), make_gif, forecast_data, STATIC / "icon.png")

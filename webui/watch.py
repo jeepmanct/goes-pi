@@ -9,6 +9,7 @@ import datetime as dt
 import json
 import re
 import statistics
+import sys
 import shutil
 import smtplib
 import threading
@@ -463,7 +464,7 @@ def _trend_loop():
 STORM_FILE = GOES_DIR / "storm.json"
 STORM_SEEN = GOES_DIR / ".storm-announced"
 VIEWS = GOES_DIR / "views.py"
-NYC_BOX = (39.2, 42.8, -76.0, -71.0)      # lat0, lat1, lon0, lon1 around New York
+NYC_BOX = (40.2, 42.4, -75.0, -71.2)      # lat0, lat1, lon0, lon1 around Stratford, CT and the Sound
 COLD_TOP_K = 213.0                          # about -60 C: deep convection
 COLD_PIXELS = 25                            # 2 km pixels colder than 220 K needed so one noisy pixel never alerts
 _views_mod = {}
@@ -557,9 +558,9 @@ def _convect_loop():
             got = cold_tops()
             if got and got[0] < COLD_TOP_K and got[1] >= COLD_PIXELS:
                 mn, n, t = got
-                push_only("GOES: cold cloud tops near NYC",
-                          f"Cloud tops as cold as {mn:.0f} K ({mn - 273.15:.0f} C) over {n * 4} sq km near New York at "
-                          f"{t:%H:%M} UTC. That can mean strong thunderstorms. Open Views, Cloud tops: Northeast.",
+                push_only("GOES: cold cloud tops near Stratford",
+                          f"Cloud tops as cold as {mn:.0f} K ({mn - 273.15:.0f} C) over {n * 4} sq km near Stratford at "
+                          f"{t:%H:%M} UTC. That can mean strong thunderstorms. Open Views, Cloud tops: Stratford & Sound.",
                           key="coldtops", every=3 * 3600, priority="high", tags="cloud_with_lightning")
         except Exception as e:
             print("cold-tops error:", e, flush=True)
@@ -593,6 +594,226 @@ def _monthly_loop():
         time.sleep(3600)
 
 
+# ---- Stratford extras: snow/ice on the dish, outage log, space weather, power, best image ----------------
+
+BESTIMG_SENT = GOES_DIR / ".bestimage-sent"
+
+
+def _local():
+    m = sys.modules.get("goes_local")
+    if m is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("goes_local", Path(__file__).resolve().parent / "local.py")
+        m = importlib.util.module_from_spec(spec)
+        sys.modules["goes_local"] = m
+        spec.loader.exec_module(m)
+    return m
+
+
+def _history_rows(since):
+    rows = []
+    try:
+        for ln in HISTORY.read_text().splitlines()[-30000:]:
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            if r["t"] >= since:
+                rows.append(r)
+    except OSError:
+        pass
+    return rows
+
+
+def dish_problem(now=None):
+    """Sentence if the signal fell off in the last 30 min while it is cold and has been precipitating, else None."""
+    now = now or time.time()
+    rows = _history_rows(now - 8 * 3600)
+    rec = [r for r in rows if r["t"] > now - 1800]
+    base = [r for r in rows if r["t"] <= now - 1800 and (r.get("ok") or 0) > 20 and r.get("vit") is not None]
+    if len(rec) < 10 or len(base) < 120:
+        return None
+    base_vit = statistics.median(r["vit"] for r in base)
+    rec_ok = statistics.median((r.get("ok") or 0) for r in rec)
+    rec_vit = statistics.median(r["vit"] for r in rec if r.get("vit") is not None) if any(r.get("vit") is not None for r in rec) else None
+    worse = rec_ok < 40 or (rec_vit is not None and rec_vit > base_vit * 1.4 and rec_vit - base_vit > 25)
+    if not worse:
+        return None
+    sep = _local().sun_separation(now)
+    if sep is not None and sep < 4:
+        return None                                          # that is the sun, not the dish
+    obs = _local().metars(hours=4)
+    if not obs or now - obs[0]["t"] > 2.5 * 3600:
+        return None
+    cold = obs[0].get("temp_f") is not None and obs[0]["temp_f"] <= 34
+    wet = [o for o in obs if o["precip"]]
+    if cold and wet:
+        w = wet[0]
+        return (f"The signal has dropped and it is {obs[0]['temp_f']}F at Bridgeport after {w['wx'][0] if w['wx'] else 'precipitation'} "
+                f"reported there. Snow or ice may be on the dish: brush or rinse it off.")
+    return None
+
+
+def outages(days=14, now=None):
+    """Episodes where goesrecv decoded almost nothing (or was not running) for 3+ minutes, newest first, with a guess at why."""
+    now = now or time.time()
+    rows = _history_rows(now - days * 86400)
+    if not rows:
+        return []
+    loc = _local()
+    try:
+        obs = loc.metars(hours=days * 24)
+    except Exception:
+        obs = []
+    eps = []
+
+    def add(t0, t1, kind):
+        if t1 - t0 >= 180:
+            eps.append({"start": t0, "end": t1, "kind": kind})
+    cur = None
+    prev = None
+    for r in rows:
+        if prev is not None and r["t"] - prev["t"] > 240:
+            if cur:
+                add(cur[0], prev["t"], "lost")
+                cur = None
+            add(prev["t"] + 60, r["t"], "off")
+        low = (r.get("ok") or 0) < 10
+        if low and cur is None:
+            cur = [r["t"], r["t"]]
+        elif low:
+            cur[1] = r["t"]
+        elif cur:
+            add(cur[0], cur[1] + 60, "lost")
+            cur = None
+        prev = r
+    if cur:
+        add(cur[0], prev["t"] + 60, "lost")
+    out = []
+    for e in sorted(eps, key=lambda e: -e["start"])[:60]:
+        mid = (e["start"] + e["end"]) / 2
+        if e["kind"] == "off":
+            why = "Receiver stopped or the Pi was off or restarting"
+        else:
+            sep = loc.sun_separation(mid)
+            near = [o for o in obs if abs(o["t"] - mid) <= 5400]
+            if sep is not None and sep < 3:
+                why = f"Sun outage: the sun was {sep:.1f} degrees from the dish direction"
+            elif any(o["precip"] and o.get("temp_f") is not None and o["temp_f"] <= 34 for o in near):
+                why = "Snow or ice likely: freezing precipitation reported at Bridgeport"
+            elif any(o["precip"] for o in near):
+                why = "Precipitation reported at Bridgeport"
+            else:
+                why = "Signal lost, cause unknown"
+        out.append({"start": e["start"], "end": e["end"], "minutes": round((e["end"] - e["start"]) / 60), "why": why,
+                    "kind": e["kind"]})
+    return out
+
+
+def _undervoltage():
+    import subprocess
+    try:
+        v = int(subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=5).stdout.split("=")[1], 16)
+    except Exception:
+        return None
+    return v
+
+
+def _extras_loop():
+    """Every 5 minutes: snow/ice check; every pass: geomagnetic and power pushes."""
+    time.sleep(240)
+    while True:
+        try:
+            msg = dish_problem()
+            if msg:
+                push_only("GOES: check the dish", msg, key="dish-ice", every=6 * 3600, priority="high", tags="snowflake")
+        except Exception as e:
+            print("dish check error:", e, flush=True)
+        try:
+            sp = _local().space().get("alert")
+            if sp and sp.get("k") and sp["k"] >= 6 and time.time() - sp["t"] < 4 * 3600:
+                push_only(f"Geomagnetic storm: K-index {sp['k']}",
+                          f"{sp['text']}. {sp.get('aurora', '')} Aurora can reach Connecticut on a clear night at K 7 or more.",
+                          key=f"kidx{sp['k']}", every=12 * 3600, priority="high" if sp["k"] >= 7 else "default", tags="sparkles")
+        except Exception as e:
+            print("space check error:", e, flush=True)
+        try:
+            v = _undervoltage()
+            if v is not None and v & 0x10001:
+                push_only("GOES: Pi power problem",
+                          "The Pi reported under-voltage" + (" right now" if v & 1 else " since it booted") +
+                          ". Check the power supply and cable; low voltage can corrupt the SD card and drop the SDR.",
+                          key="undervolt", every=7 * 86400, priority="high", tags="zap")
+        except Exception as e:
+            print("power check error:", e, flush=True)
+        time.sleep(300)
+
+
+def _cloudiness(path):
+    from PIL import Image
+    im = Image.open(path).convert("RGB")
+    im.thumbnail((160, 160))
+    px = list(im.getdata())
+    return sum(1 for r, g, b in px if min(r, g, b) > 170) / max(len(px), 1)
+
+
+def best_image(now_local):
+    """Clearest Stratford-view frame from 10:00-14:30 local today, or None."""
+    d = _digest()
+    best = None
+    for t, p in d.frames("stratford"):
+        lt = t.astimezone(now_local.tzinfo)
+        if lt.date() != now_local.date() or not ((10, 0) <= (lt.hour, lt.minute) <= (14, 30)):
+            continue
+        try:
+            c = _cloudiness(p)
+        except OSError:
+            continue
+        if best is None or c < best[0]:
+            best = (c, t, p)
+    return best
+
+
+def push_image(title, caption, path):
+    """ntfy attachment push (public satellite imagery to the owner's own topic). Returns True if sent."""
+    try:
+        cfg = tomllib.loads(MAIL_CONF.read_text())
+        a = cfg.get("alerts", {})
+        topic = str(a.get("ntfy_topic", "")).strip()
+        server = str(a.get("ntfy_server", "https://ntfy.sh")).rstrip("/")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", topic) or not server.startswith("https://"):
+            return False
+        import urllib.request
+        data = Path(path).read_bytes()
+        req = urllib.request.Request(f"{server}/{topic}", data=data, method="PUT",
+                                     headers={"Filename": Path(path).name, "Title": title.encode("ascii", "replace").decode()[:120],
+                                              "Message": caption[:300], "Tags": "earth_americas"})
+        urllib.request.urlopen(req, timeout=60).read()
+        return True
+    except Exception as e:
+        print("image push failed:", e, flush=True)
+        return False
+
+
+def _bestimage_loop():
+    from zoneinfo import ZoneInfo
+    local = ZoneInfo("America/New_York")
+    time.sleep(900)
+    while True:
+        try:
+            now = dt.datetime.now(local)
+            today = f"{now:%Y-%m-%d}"
+            done = BESTIMG_SENT.read_text().strip() if BESTIMG_SENT.exists() else ""
+            if done != today and (now.hour, now.minute) >= (14, 40) and now.hour < 18:
+                got = best_image(now)
+                if got and push_image("Stratford from space today",
+                                      f"GOES-19 at {got[1].astimezone(local):%-I:%M %p}, the clearest view of the day ({got[0] * 100:.0f}% cloud).", got[2]):
+                    BESTIMG_SENT.write_text(today)
+        except Exception as e:
+            print("best image error:", e, flush=True)
+        time.sleep(1800)
+
+
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()

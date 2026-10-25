@@ -189,6 +189,14 @@ def _freq_mhz(core=0):
     return int(f) / 1000 if f.isdigit() else None
 
 
+def _sd_written():
+    """Bytes written to the SD card since boot (field 7 of /sys/block/mmcblk0/stat is 512-byte sectors written)."""
+    try:
+        return int(_read("/sys/block/mmcblk0/stat").split()[6]) * 512
+    except (IndexError, ValueError):
+        return None
+
+
 def _sampler():
     prev_cpu, prev_net, prev_proc, prev_t = _cpu_times(), _net_bytes(), _proc_times(), time.time()
     slow = {"throttle": None, "ips": {}, "t": 0}
@@ -222,7 +230,7 @@ def _sampler():
                 "mem": {"total": total, "available": avail, "used": total - avail, "cached": m.get("Cached", 0) + m.get("Buffers", 0),
                         "swap_total": m.get("SwapTotal", 0), "swap_used": m.get("SwapTotal", 0) - m.get("SwapFree", 0)},
                 "disks": _disks(), "net": rates, "ips": slow["ips"], "throttle": slow["throttle"],
-                "procs": len(procs), "top": top[:8],
+                "procs": len(procs), "top": top[:8], "sd_written": _sd_written(),
             }
             with _lock:
                 _live.clear()

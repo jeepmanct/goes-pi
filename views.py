@@ -29,7 +29,7 @@ DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
 CACHE = Path("/home/pi/goes/cache/views")   # static per-region geometry, rebuilt if GEO_VER changes
-GEO_VER = 5
+GEO_VER = 7
 LOCAL = ZoneInfo("America/New_York")
 
 SUB_LON = -75.0                 # projection origin in the HRIT headers (geos(-75.0)); coastline fit peaks here, not at -75.2
@@ -40,6 +40,7 @@ X0, STEP = -0.151844, 0.000056  # fixed-grid scan angle of pixel 0 / per pixel (
 NATIVE = 5424
 VIS_AGE = dt.timedelta(minutes=12)   # visible/infrared must come from the same scan, roughly
 NYC = (40.71, -74.01)
+HOME = (40.00, -75.00)          # Stratford, CT
 STORM_FILE = Path("/home/pi/goes/storm.json")   # {"name", "lat", "lon", "half": degrees}; written by storm.py or by hand
 
 # (name, lat, lon, rank): rank 1 = big, 2 = regional, 3 = local; a view shows cities up to its city_rank
@@ -78,6 +79,8 @@ CITIES = [
     ("Harrisburg", 40.27, -76.88, 3), ("Montauk", 41.04, -71.95, 3), ("Poughkeepsie", 41.70, -73.92, 3),
     ("Trenton", 40.22, -74.76, 3), ("Wilmington", 39.74, -75.55, 3), ("Bridgeport", 41.18, -73.19, 3),
     ("Manchester", 42.99, -71.46, 3), ("Springfield", 42.10, -72.59, 3), ("Binghamton", 42.10, -75.91, 3),
+    ("Norwalk", 41.12, -73.41, 3), ("Waterbury", 41.56, -73.04, 3), ("Danbury", 41.39, -73.45, 3),
+    ("New London", 41.36, -72.10, 3), ("Riverhead", 40.92, -72.66, 3), ("White Plains", 41.03, -73.77, 3),
     ("Cape May", 38.94, -74.91, 3), ("Long Branch", 40.30, -73.99, 3), ("Islip", 40.73, -73.21, 3),
 ]
 
@@ -89,6 +92,7 @@ REGIONS = {
     "gulf":    dict(name="GULF_CARIBBEAN", label="Gulf and Caribbean", bbox=(8, 33, -100, -56), f=1, scale=1, borders=True, nyc=False, city_rank=2, sun=True),
     "northeast": dict(name="NORTHEAST_US", label="Northeast US", bbox=(38.0, 47.5, -82.0, -64.0), f=1, scale=2, borders=True, nyc=True, city_rank=3),
     "eastus":  dict(name="EAST_US", label="East Coast US", bbox=(24, 48, -90, -58), f=1, scale=1, borders=True, nyc=True, city_rank=2, sun=True),
+    "stratford": dict(name="STRATFORD_LIS", label="Stratford and Long Island Sound", bbox=(40.2, 42.6, -75.2, -71.0), f=1, scale=4, borders=True, nyc=True, city_rank=3, home_only=False),
     "nyc":     dict(name="NYC_AREA", label="New York City area", bbox=(37.5, 44.5, -78.5, -68.5), f=1, scale=3, borders=True, nyc=True, city_rank=3),
 }
 def _fog(key, label, name):
@@ -108,6 +112,7 @@ REGIONS.update({
     "fog_northeast": _fog("northeast", "Night fog, Northeast US", "FOG_NORTHEAST_US"),
     "fog_eastus": _fog("eastus", "Night fog, East Coast US", "FOG_EAST_US"),
     "fog_nyc":    _fog("nyc", "Night fog, New York City area", "FOG_NYC_AREA"),
+    "fog_stratford": _fog("stratford", "Night fog, Stratford and the Sound", "FOG_STRATFORD_LIS"),
     "fog_namer":  _fog("namer", "Night fog, North America", "FOG_NORTH_AMERICA"),
     "fog_gulf":   _fog("gulf", "Night fog, Gulf and Caribbean", "FOG_GULF_CARIBBEAN"),
     "fog_samer":  _fog("samer", "Night fog, South America", "FOG_SOUTH_AMERICA"),
@@ -144,6 +149,7 @@ REGIONS.update({
     "ct_gulf":   _ct("gulf", "Cloud tops, Gulf and Caribbean", "CT_GULF_CARIBBEAN"),
     "ct_namer":  _ct("namer", "Cloud tops, North America", "CT_NORTH_AMERICA"),
     "ct_globe":  _ct("globe", "Cloud tops, full disk", "CT_FD_GLOBE"),
+    "ct_stratford": _ct("stratford", "Cloud tops, Stratford and the Sound", "CT_STRATFORD_LIS"),
 })
 FOG_AGE = dt.timedelta(minutes=35)   # channels are staggered by ~30 min in the broadcast; fog moves slowly
 
@@ -385,7 +391,7 @@ def synthetic_color(red, ir, disc, cosz, land):
     Not real color: clouds are white, land green or tan, ocean blue, all shaded by C02."""
     red, ir, land = (np.asarray(a, np.float32) for a in (red, ir, land))
     lit = disc & (cosz > 0.25)
-    ref = float(np.percentile(red[lit], 99.0)) if lit.any() else 1.0
+    ref = max(float(np.percentile(red[lit], 99.0)), 0.4) if lit.any() else 1.0   # floor: a clear small view must not read as cloud
     rn = np.clip(red / max(ref, 1e-3), 0, 1).astype(np.float32)
     cloud = smoothstep(0.28, 0.55, rn)
     cloud = cloud * np.where(land > 0.5, 0.35 + 0.65 * smoothstep(0.12, 0.40, ir), 1.0)
@@ -477,8 +483,8 @@ def draw_cities(draw, max_rank, box, f, scale, size, fs):
     placed = []
     gap = fs * 3.2
     for name, lat, lon, rank in sorted(CITIES, key=lambda c: c[3]):
-        if rank > max_rank:
-            continue
+        if rank > max_rank or (abs(lat - HOME[0]) < 0.12 and abs(lon - HOME[1]) < 0.12):
+            continue                                  # the home marker covers Stratford/Bridgeport
         c, r, vis = to_pixels(np.array([lat]), np.array([lon]))
         x, y = (c[0] - c0 + 0.5) / f * scale, (r[0] - r0 + 0.5) / f * scale
         if not vis[0] or not (6 <= x < size[0] - 6 and 6 <= y < size[1] - 6):
@@ -554,12 +560,17 @@ def build_overlay(spec, box, f, size, disc):
     if spec.get("city_rank"):
         draw_cities(d, spec["city_rank"], box, f, scale, size, fs)
     if spec["nyc"]:
-        c, r, vis = to_pixels(np.array([NYC[0]]), np.array([NYC[1]]))
-        x, y = (c[0] - box[2] + 0.5) / f * scale, (r[0] - box[0] + 0.5) / f * scale
-        if 0 <= x < size[0] and 0 <= y < size[1]:
-            rad = max(5, fs // 3)
-            d.ellipse((x - rad, y - rad, x + rad, y + rad), outline=(255, 90, 90, 230), width=2)
-            d.text((x + rad + 4, y - fs * 0.6), "NYC", fill=(255, 170, 170, 245), font=font, **OUTLINE)
+        # Stratford is the home marker on every view that has one; NYC stays on the close-in views only
+        marks = [("Stratford", HOME, (255, 90, 90, 230), (255, 170, 170, 245))]
+        if scale >= 2 and spec.get("name") != "STRATFORD_LIS" or spec.get("name") == "NYC_AREA":
+            marks.append(("NYC", NYC, (120, 190, 255, 230), (190, 220, 255, 245)))
+        for label, (lat, lon), ring, txt in marks:
+            c, r, vis = to_pixels(np.array([lat]), np.array([lon]))
+            x, y = (c[0] - box[2] + 0.5) / f * scale, (r[0] - box[0] + 0.5) / f * scale
+            if 0 <= x < size[0] and 0 <= y < size[1]:
+                rad = max(5, fs // 3)
+                d.ellipse((x - rad, y - rad, x + rad, y + rad), outline=ring, width=2)
+                d.text((x + rad + 4, y - fs * 0.6), label, fill=txt, font=font, **OUTLINE)
     return ov
 
 

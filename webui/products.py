@@ -250,6 +250,35 @@ def product(name):
     return {"name": name, "text": _read(name)}
 
 
+UGC_RE = re.compile(r"^[A-Z]{2}[CZ]\d{3}", re.M)
+
+
+def ugc_zones(text):
+    """Set of zone codes (e.g. CTZ009, ANZ335) named by a bulletin's UGC lines, with ranges like CTZ005>007 expanded."""
+    zones = set()
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if UGC_RE.match(lines[i]):
+            ugc = lines[i].strip()
+            while not re.search(r"-\d{6}-$", ugc) and i + 1 < len(lines):
+                i += 1
+                ugc += lines[i].strip()
+            prefix = ""
+            for tok in ugc.split("-"):
+                if re.fullmatch(r"[A-Z]{2}[CZ]\d{3}(>\d{3})?", tok):
+                    prefix, rest = tok[:3], tok[3:]
+                elif re.fullmatch(r"\d{3}(>\d{3})?", tok) and prefix:
+                    rest = tok
+                else:
+                    continue
+                a, _, b = rest.partition(">")
+                for n in range(int(a), int(b or a) + 1):
+                    zones.add(f"{prefix}{n:03d}")
+        i += 1
+    return zones
+
+
 def _vtec_time(s):
     if s.startswith("000000"):
         return None
@@ -259,9 +288,11 @@ def _vtec_time(s):
         return None
 
 
-def active_alerts(offices=None, now=None):
+def active_alerts(offices=None, now=None, zones=None):
     """Warnings, watches and advisories still in force, from VTEC codes in the last ACTIVE_HOURS hours of
-    bulletins for the given offices (default: the ones in mail.conf). Cancelled/expired ones are dropped."""
+    bulletins for the given offices (default: the ones in mail.conf). Cancelled/expired ones are dropped.
+    With zones, only bulletins whose UGC lines include one of those zones count."""
+    zones = {z.upper() for z in zones} if zones else None
     offices = {o.upper()[-3:] for o in (offices or my_offices())}
     now = now or time.time()
     cut = now - ACTIVE_HOURS * 3600
@@ -272,6 +303,8 @@ def active_alerts(offices=None, now=None):
         try:
             text = _read(r["name"])
         except OSError:
+            continue
+        if zones and not (ugc_zones(text) & zones):
             continue
         for m in VTEC_RE.finditer(text):
             _status, action, office, phen, sig, etn, _begin, end = m.groups()

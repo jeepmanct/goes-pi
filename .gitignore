@@ -21,3 +21,9 @@ cache/
 .digest-weekly-sent
 .digest-weekly-failed
 pi-history.jsonl
+
+metar-kbdr.jsonl
+storm.json
+.storm-announced
+.health-sent
+.bestimage-sent

@@ -267,13 +267,14 @@ def build(cfg, now_local, to=None):
     imgs = []   # (cid, caption, bytes, subtype)
     ne = frames("northeast")
     fog = [(t, p) for t, p in frames("fog_northeast") if now - t <= dt.timedelta(hours=14)]
-    ny = frames("nyc")
+    ny = frames("stratford") or frames("nyc")
+    ny_label = "Stratford and Long Island Sound" if frames("stratford") else "New York City area"
     if fog:
         imgs.append(("fog", "Overnight fog and low cloud (aqua/green = fog or low cloud)", fog[-1]))
     if ne and now - ne[-1][0] <= dt.timedelta(hours=8):
         imgs.append(("ne", "Northeast US, latest scan", ne[-1]))
     if ny and now - ny[-1][0] <= dt.timedelta(hours=8):
-        imgs.append(("nyc", "New York City area, latest scan", ny[-1]))
+        imgs.append(("nyc", f"{ny_label}, latest scan", ny[-1]))
     gif = loop_gif("northeast")
     blocks = forecast_blocks(cfg)
     now_obs = roundup_block(cfg)
@@ -372,7 +373,7 @@ def share_link(cfg, email=None):
 
 VIEW_LABELS = {
     "globe": "Full disk globe", "northeast": "Northeast US", "eastus": "East Coast US",
-    "nyc": "New York City area", "namer": "North America", "gulf": "Gulf and Caribbean",
+    "stratford": "Stratford and Long Island Sound", "nyc": "New York City area", "namer": "North America", "gulf": "Gulf and Caribbean",
     "samer": "South America", "fd": "Full disk", "m1": "Mesoscale region 1", "m2": "Mesoscale region 2",
 }
 CHANNELS = {

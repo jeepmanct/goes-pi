@@ -134,7 +134,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <canvas id="c-freq"></canvas>
   </div>
   <div class="card">
-    <h2>Sky from New York</h2>
+    <h2>Sky from Stratford, CT</h2>
     <div id="sky" style="line-height:1.7"></div>
     <p class="msg">The dish points at GOES-19 (75°W). Twice a year, around the equinoxes, the sun passes behind the satellite for a few minutes a day and the signal drops out; that is the sun, not a fault.</p>
   </div>
@@ -159,6 +159,11 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <h2>Disk</h2>
     <div id="disk-bar" style="height:14px;border-radius:7px;background:var(--line);overflow:hidden"><div id="disk-fill" style="height:100%;width:0;background:var(--accent)"></div></div>
     <p class="msg" id="disk-txt"></p>
+  </div>
+  <div class="card">
+    <h2>Outages, last 14 days</h2>
+    <div id="outage-list"><p class="msg">Loading…</p></div>
+    <p class="msg">An outage is three or more minutes with almost no packets decoded. The cause is a best guess from the sun's position and the Bridgeport airport weather.</p>
   </div>
   <div class="card">
     <h2>Alerts</h2>
@@ -263,6 +268,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <select id="globe-region" style="width:auto">
       <option value="northeast">Northeast US</option>
       <option value="eastus">East Coast US</option>
+      <option value="stratford">Stratford &amp; Long Island Sound</option>
       <option value="nyc">New York City area</option>
       <option value="namer">North America</option>
       <option value="gulf">Gulf &amp; Caribbean</option>
@@ -279,6 +285,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
         <option value="ct_eastus">Cloud tops: East Coast US</option>
         <option value="ct_gulf">Cloud tops: Gulf &amp; Caribbean</option>
         <option value="ct_namer">Cloud tops: North America</option>
+        <option value="ct_stratford">Cloud tops: Stratford &amp; Sound</option>
         <option value="ct_globe">Cloud tops: Full disk</option>
       </optgroup>
       <optgroup label="Storm (only while an advisory is active)">
@@ -287,6 +294,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
       <optgroup label="Night fog (after dark)">
         <option value="fog_northeast">Fog: Northeast US</option>
         <option value="fog_eastus">Fog: East Coast US</option>
+        <option value="fog_stratford">Fog: Stratford &amp; Sound</option>
         <option value="fog_nyc">Fog: New York City area</option>
         <option value="fog_namer">Fog: North America</option>
         <option value="fog_gulf">Fog: Gulf &amp; Caribbean</option>
@@ -349,6 +357,12 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 
 <section id="weather">
   <div id="wx-alerts"></div>
+  <div class="card" id="loc-card">
+    <h2 id="loc-title">Stratford, CT</h2>
+    <div id="loc-now" style="font-size:20px;font-weight:600"></div>
+    <div class="msg" id="loc-now2"></div>
+    <div id="loc-body"></div>
+  </div>
   <div class="card">
     <div class="row">
       <select id="wx-cat" style="width:auto"><option value="">All products</option></select>
@@ -679,7 +693,7 @@ function showGlobe(i) {
 }
 // ---- compare two views of the same time with a slider
 let cmpOn = false, cmpFrames = [], cmpLoadId = 0;
-const CMP_PAIR = {northeast: 'ct_northeast', eastus: 'wv_eastus', gulf: 'ct_gulf', namer: 'wv_namer', globe: 'wv_globe', nyc: 'northeast',
+const CMP_PAIR = {northeast: 'ct_northeast', eastus: 'wv_eastus', gulf: 'ct_gulf', namer: 'wv_namer', globe: 'wv_globe', stratford: 'ct_stratford', ct_stratford: 'stratford', fog_stratford: 'stratford', nyc: 'northeast',
   samer: 'globe', ct_northeast: 'northeast', ct_eastus: 'eastus', ct_gulf: 'gulf', ct_namer: 'namer', ct_globe: 'globe',
   wv_eastus: 'eastus', wv_namer: 'namer', wv_globe: 'globe', wv_gulf: 'gulf', fog_northeast: 'northeast', fog_eastus: 'eastus',
   fog_nyc: 'nyc', fog_namer: 'namer', fog_gulf: 'gulf', fog_samer: 'samer', storm: 'northeast'};
@@ -789,7 +803,21 @@ function hchart(sel, pts, key, color, fixedLo) {
   }
   g.stroke();
 }
+async function loadOutages() {
+  const r = await api('/api/outages'), box = $('#outage-list'); box.innerHTML = '';
+  if (r.error) { box.textContent = r.error; return; }
+  if (!r.outages.length) { const p = document.createElement('p'); p.className = 'msg'; p.textContent = 'No outages recorded.'; box.append(p); return; }
+  r.outages.forEach(o => {
+    const d = document.createElement('div'); d.className = 'mrow'; d.style.display = 'block';
+    const h = document.createElement('div'); h.style.fontWeight = '600';
+    const a = new Date(o.start * 1000);
+    h.textContent = a.toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) + ' · ' + (o.minutes >= 90 ? (o.minutes / 60).toFixed(1) + ' h' : o.minutes + ' min');
+    const w = document.createElement('div'); w.className = 'msg'; w.style.margin = '2px 0 0'; w.textContent = o.why;
+    d.append(h, w); box.append(d);
+  });
+}
 async function loadSignal() {
+  loadOutages();
   const d = await api('/api/history?hours=' + $('#sig-range').value);
   hchart('#h-vit', d.points, 'vit', '--warn'); hchart('#h-ok', d.points, 'ok', '--good', 0); hchart('#h-gain', d.points, 'gain', '--accent');
   const st = d.state || {};
@@ -845,6 +873,7 @@ function piRender(live) {
     piTile('Temperature', live.temp == null ? '–' : live.temp.toFixed(0) + ' °C', live.temp == null ? '' : (live.temp * 9 / 5 + 32).toFixed(0) + ' °F', live.temp == null ? '' : piColor(live.temp, 65, 78).replace('var(--accent)', '')),
     piTile('Load', live.load[0].toFixed(2), `5m ${live.load[1].toFixed(2)} · 15m ${live.load[2].toFixed(2)}`),
     piTile('Uptime', fmtUp(live.uptime), live.procs + ' processes'),
+    piTile('SD card writes', live.sd_written == null ? '–' : fmtBytes(live.sd_written), live.sd_written == null || !live.uptime ? 'since boot' : 'since boot, about ' + fmtBytes(live.sd_written / live.uptime * 86400) + ' a day'),
     piTile('Power / throttle', th ? (bad ? 'Problem' : 'OK') : '–', th ? (bad ? th.now.join(', ') : th.past.length ? 'Earlier: ' + th.past.join(', ') : 'No issues since boot') : 'not available', bad ? 'var(--bad)' : th && !th.past.length ? 'var(--good)' : ''));
   $('#pi-cores').replaceChildren(...live.cores.map((c, i) => piRow('Core ' + i, c, c.toFixed(0) + '%', piColor(c, 70, 90))));
   const cache = Math.min(m.cached, m.total - m.used);
@@ -1168,19 +1197,49 @@ async function loadWeather() {
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
     wxSearch(true);
   }
-  loadWxAlerts();
+  loadWxAlerts(); loadLocal();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
   const box = $('#wx-alerts'); box.innerHTML = '';
   if (r.error) return;
+  const loc = r.local || [], wide = r.alerts.length;
   const c = document.createElement('div');
-  c.className = 'banner ' + (r.alerts.length ? (r.alerts.some(a => a.level === 'W') ? 'bad' : 'warn') : 'good');
-  c.textContent = r.alerts.length ? r.alerts.length + ' active alert' + (r.alerts.length > 1 ? 's' : '') : 'No active warnings';
+  c.className = 'banner ' + (loc.length ? (loc.some(a => a.level === 'W') ? 'bad' : 'warn') : 'good');
+  c.textContent = loc.length ? loc.length + ' alert' + (loc.length > 1 ? 's' : '') + ' for Stratford' : 'No alerts for Stratford';
   const sm = document.createElement('small');
-  sm.textContent = r.alerts.length ? r.alerts.map(a => `${a.name} (${a.office}${a.ends ? ', until ' + wxFmt(a.ends) : ''})`).join(' · ')
-    : 'Warnings, watches and advisories in force for your offices (' + wxMine.join(', ') + ')';
+  sm.textContent = (loc.length ? loc.map(a => `${a.name}${a.ends ? ' until ' + wxFmt(a.ends) : ''}`).join(' · ') + '. ' : 'Nothing in force for Fairfield County or the western Sound. ')
+    + (wide ? wide + ' more in the wider region (' + wxMine.join(', ') + ').' : '');
   c.append(sm); box.append(c);
+}
+function locBlock(title, rows, note) {
+  const d = document.createElement('div'); d.style.marginTop = '14px';
+  const h = document.createElement('div'); h.style.fontWeight = '700'; h.textContent = title; d.append(h);
+  if (note) { const n = document.createElement('div'); n.className = 'msg'; n.style.margin = '2px 0 6px'; n.textContent = note; d.append(n); }
+  rows.forEach(([a, b]) => {
+    const r = document.createElement('div'); r.style.cssText = 'margin:4px 0';
+    if (b === undefined) r.textContent = a; else { const s = document.createElement('b'); s.textContent = a + ' '; r.append(s, document.createTextNode(b)); }
+    d.append(r);
+  });
+  return d;
+}
+async function loadLocal() {
+  const r = await api('/api/local'); const body = $('#loc-body'); body.innerHTML = '';
+  if (r.error) { $('#loc-now').textContent = r.error; return; }
+  $('#loc-title').textContent = r.place;
+  const n = r.now;
+  $('#loc-now').textContent = n ? (n.temp_f != null ? n.temp_f + '°F  ' : '') + (n.wx.length ? n.wx[0] : (n.sky.length ? n.sky[n.sky.length - 1].cover : '')) : 'No recent observation';
+  $('#loc-now2').textContent = n ? 'Bridgeport airport (KBDR), ' + wxFmt(n.t) + ' · ' + n.summary + (n.pressure_inhg ? ' · ' + n.pressure_inhg.toFixed(2) + ' inHg' : '') : '';
+  if (r.forecast) body.append(locBlock(r.forecast.name + ' forecast', r.forecast.periods.slice(0, 6), r.forecast.issued));
+  if (r.marine) body.append(locBlock('Long Island Sound (west of New Haven)', (r.marine.headlines || []).map(h => [h]).concat(r.marine.periods.slice(0, 5)), r.marine.issued));
+  if (r.taf) { const d = locBlock('Airport forecast (TAF) for Bridgeport', [], wxFmt(r.taf.t)); const pre = document.createElement('pre'); pre.textContent = r.taf.text; d.append(pre); body.append(d); }
+  const sp = r.space;
+  if (sp && (sp.alert || sp.sunspot != null)) {
+    const rows = [];
+    if (sp.alert) rows.push([sp.alert.text + ',', wxFmt(sp.alert.t) + (sp.alert.aurora ? '. ' + sp.alert.aurora : '')]);
+    if (sp.sunspot != null) rows.push(['Sunspot number', sp.sunspot + ' · 10.7 cm flux ' + sp.flux]);
+    body.append(locBlock('Space weather', rows, 'Aurora is only likely in Connecticut at a K-index of 7 or more.'));
+  }
 }
 async function wxSearch(reset) {
   if (reset) { wxOffset = 0; $('#wx-list').innerHTML = ''; }
@@ -1216,8 +1275,8 @@ $('#wx-mine').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = ''; $('
 $('#wx-warn').onclick = () => { wxWarnOnly = true; $('#wx-cat').value = ''; $('#wx-office').value = ''; wxSearch(true); };
 $('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true); };
 
-// ---- sky: sun, moon and where the dish points (New York)
-const SKY = {lat: 40.71, lon: -74.01, satLon: -75.0, tz: 'America/New_York'};
+// ---- sky: sun, moon and where the dish points (Stratford, CT)
+const SKY = {lat: 41.18, lon: -73.13, satLon: -75.0, tz: 'America/New_York'};   // Stratford, CT
 const rad = Math.PI / 180;
 function sunPos(ms) {
   const n = ms / 86400000 + 2440587.5 - 2451545.0;
