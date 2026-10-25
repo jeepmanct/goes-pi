@@ -239,10 +239,6 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
     <button class="b ghost" id="webui-restart">Restart panel</button>
     <p class="msg">Reloads this web panel, for example after an update. goesrecv and goesproc are stopped for about a minute and start again by themselves. The page reloads when the panel is back.</p>
   </div>
-  <div class="card">
-    <h2>System</h2>
-    <div id="sys"></div>
-  </div>
   <div class="msg" id="ctl-msg"></div>
 </section>
 
@@ -613,8 +609,6 @@ async function pollStatus() {
       $('#panel-up').textContent = 'Panel started ' + st.toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'}) + ' · up ' +
         (sec >= 86400 ? Math.floor(sec / 86400) + ' d ' + Math.floor(sec % 86400 / 3600) + ' h' : sec >= 3600 ? Math.floor(sec / 3600) + ' h ' + Math.floor(sec % 3600 / 60) + ' min' : sec >= 60 ? Math.floor(sec / 60) + ' min' : Math.round(sec) + ' s');
     }
-    const sy = status.system;
-    $('#sys').innerHTML = `CPU temp: ${sy.cpu_temp ?? '?'} °C<br>Load: ${sy.load.toFixed(2)}<br>Disk free: ${fmtBytes(sy.disk_free)} of ${fmtBytes(sy.disk_total)}`;
     const run = status.goesrecv.running;
     const t = $('#aim-toggle');
     t.textContent = run ? 'Stop goesrecv' : 'Start goesrecv';
