@@ -10,6 +10,7 @@ Output: ~/goes/data/goes19/<view>/YYYY-MM-DD/GOES19_<NAME>_<scan start>Z.jpg
 Run from cron; backfills any scans that have no output yet, newest first.
 """
 import argparse
+import time
 import datetime as dt
 import fcntl
 import json
@@ -28,7 +29,7 @@ DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
 MAPS = Path("/home/pi/goes/maps")
 CACHE = Path("/home/pi/goes/cache/views")   # static per-region geometry, rebuilt if GEO_VER changes
-GEO_VER = 3
+GEO_VER = 4
 LOCAL = ZoneInfo("America/New_York")
 
 SUB_LON = -75.0                 # projection origin in the HRIT headers (geos(-75.0)); coastline fit peaks here, not at -75.2
@@ -39,20 +40,64 @@ X0, STEP = -0.151844, 0.000056  # fixed-grid scan angle of pixel 0 / per pixel (
 NATIVE = 5424
 VIS_AGE = dt.timedelta(minutes=12)   # visible/infrared must come from the same scan, roughly
 NYC = (40.71, -74.01)
+STORM_FILE = Path("/home/pi/goes/storm.json")   # {"name", "lat", "lon", "half": degrees}; written by storm.py or by hand
+
+# (name, lat, lon, rank): rank 1 = big, 2 = regional, 3 = local; a view shows cities up to its city_rank
+CITIES = [
+    ("Mexico City", 19.43, -99.13, 1), ("Houston", 29.76, -95.37, 1), ("Chicago", 41.88, -87.63, 1),
+    ("Toronto", 43.65, -79.38, 1), ("Montreal", 45.50, -73.57, 1), ("Miami", 25.76, -80.19, 1),
+    ("Atlanta", 33.75, -84.39, 1), ("Dallas", 32.78, -96.80, 1), ("Havana", 23.11, -82.37, 1),
+    ("Bogota", 4.71, -74.07, 1), ("Lima", -12.05, -77.04, 1), ("Caracas", 10.48, -66.90, 1),
+    ("Quito", -0.18, -78.47, 1), ("Sao Paulo", -23.55, -46.63, 1), ("Rio", -22.91, -43.17, 1),
+    ("Buenos Aires", -34.60, -58.38, 1), ("Santiago", -33.45, -70.67, 1), ("La Paz", -16.50, -68.15, 1),
+    ("Brasilia", -15.79, -47.88, 1), ("Panama City", 8.98, -79.52, 1), ("Santo Domingo", 18.49, -69.93, 1),
+    ("San Juan", 18.47, -66.11, 1), ("Kingston", 17.97, -76.79, 1), ("Guatemala City", 14.63, -90.51, 1),
+    ("Winnipeg", 49.90, -97.14, 1), ("Denver", 39.74, -104.99, 1), ("Los Angeles", 34.05, -118.24, 1),
+    ("Halifax", 44.65, -63.58, 1), ("Montevideo", -34.90, -56.19, 1), ("Asuncion", -25.26, -57.58, 1),
+    ("Manaus", -3.12, -60.02, 1), ("Recife", -8.05, -34.88, 1), ("Salvador", -12.97, -38.51, 1),
+    ("Lima", -12.05, -77.04, 1), ("Guayaquil", -2.19, -79.89, 2), ("Medellin", 6.24, -75.58, 2),
+    ("Monterrey", 25.69, -100.32, 2), ("Cancun", 21.16, -86.85, 2), ("Nassau", 25.05, -77.36, 2),
+    ("New Orleans", 29.95, -90.07, 2), ("Tampa", 27.95, -82.46, 2), ("Orlando", 28.54, -81.38, 2),
+    ("Charlotte", 35.23, -80.84, 2), ("Nashville", 36.16, -86.78, 2), ("Memphis", 35.15, -90.05, 2),
+    ("Kansas City", 39.10, -94.58, 2), ("Minneapolis", 44.98, -93.27, 2), ("St. Louis", 38.63, -90.20, 2),
+    ("Detroit", 42.33, -83.05, 2), ("Cleveland", 41.50, -81.69, 2), ("Pittsburgh", 40.44, -80.00, 2),
+    ("Washington", 38.91, -77.04, 2), ("Philadelphia", 39.95, -75.17, 2), ("Boston", 42.36, -71.06, 2),
+    ("Ottawa", 45.42, -75.70, 2), ("Quebec", 46.81, -71.21, 2), ("Bermuda", 32.30, -64.78, 2),
+    ("Raleigh", 35.78, -78.64, 2), ("Jacksonville", 30.33, -81.66, 2), ("Richmond", 37.54, -77.44, 2),
+    ("Louisville", 38.25, -85.76, 2), ("Indianapolis", 39.77, -86.16, 2), ("Columbus", 39.96, -83.00, 2),
+    ("San Jose CR", 9.93, -84.08, 2), ("Managua", 12.11, -86.27, 2), ("Tegucigalpa", 14.07, -87.19, 2),
+    ("Port-au-Prince", 18.59, -72.31, 2), ("Barranquilla", 10.96, -74.80, 2), ("Maracaibo", 10.65, -71.64, 2),
+    ("Cali", 3.45, -76.53, 2), ("Cusco", -13.53, -71.97, 2), ("Cordoba", -31.42, -64.18, 2),
+    ("Belo Horizonte", -19.92, -43.94, 2), ("Fortaleza", -3.73, -38.52, 2), ("Belem", -1.46, -48.50, 2),
+    ("Porto Alegre", -30.03, -51.23, 2), ("Antofagasta", -23.65, -70.40, 2), ("Valparaiso", -33.05, -71.62, 2),
+    ("Albany", 42.65, -73.76, 3), ("Hartford", 41.77, -72.67, 3), ("Providence", 41.82, -71.41, 3),
+    ("Syracuse", 43.05, -76.15, 3), ("Buffalo", 42.89, -78.88, 3), ("Rochester", 43.16, -77.61, 3),
+    ("Portland ME", 43.66, -70.26, 3), ("Burlington", 44.48, -73.21, 3), ("Baltimore", 39.29, -76.61, 3),
+    ("Scranton", 41.41, -75.66, 3), ("Allentown", 40.60, -75.47, 3), ("Atlantic City", 39.36, -74.42, 3),
+    ("Newark", 40.74, -74.17, 3), ("New Haven", 41.31, -72.92, 3), ("Worcester", 42.26, -71.80, 3),
+    ("Harrisburg", 40.27, -76.88, 3), ("Montauk", 41.04, -71.95, 3), ("Poughkeepsie", 41.70, -73.92, 3),
+    ("Trenton", 40.22, -74.76, 3), ("Wilmington", 39.74, -75.55, 3), ("Bridgeport", 41.18, -73.19, 3),
+    ("Manchester", 42.99, -71.46, 3), ("Springfield", 42.10, -72.59, 3), ("Binghamton", 42.10, -75.91, 3),
+    ("Cape May", 38.94, -74.91, 3), ("Long Branch", 40.30, -73.99, 3), ("Islip", 40.73, -73.21, 3),
+]
 
 # bbox = (lat_min, lat_max, lon_min, lon_max); f = downsample factor, scale = upsample after
 REGIONS = {
-    "globe":   dict(name="FD_GLOBE", label="Full disk", bbox=None, f=3, scale=1, borders=False, nyc=False, globe=True),
-    "namer":   dict(name="NORTH_AMERICA", label="North America", bbox=(12, 62, -140, -48), f=2, scale=1, borders=True, nyc=True),
-    "samer":   dict(name="SOUTH_AMERICA", label="South America", bbox=(-56, 14, -86, -32), f=2, scale=1, borders=True, nyc=False),
-    "gulf":    dict(name="GULF_CARIBBEAN", label="Gulf and Caribbean", bbox=(8, 33, -100, -56), f=1, scale=1, borders=True, nyc=False),
-    "northeast": dict(name="NORTHEAST_US", label="Northeast US", bbox=(38.0, 47.5, -82.0, -64.0), f=1, scale=2, borders=True, nyc=True),
-    "eastus":  dict(name="EAST_US", label="East Coast US", bbox=(24, 48, -90, -58), f=1, scale=1, borders=True, nyc=True),
-    "nyc":     dict(name="NYC_AREA", label="New York City area", bbox=(37.5, 44.5, -78.5, -68.5), f=1, scale=3, borders=True, nyc=True),
+    "globe":   dict(name="FD_GLOBE", label="Full disk", bbox=None, f=3, scale=1, borders=False, nyc=False, globe=True, sun=True),
+    "namer":   dict(name="NORTH_AMERICA", label="North America", bbox=(12, 62, -140, -48), f=2, scale=1, borders=True, nyc=True, city_rank=1, sun=True),
+    "samer":   dict(name="SOUTH_AMERICA", label="South America", bbox=(-56, 14, -86, -32), f=2, scale=1, borders=True, nyc=False, city_rank=2, sun=True),
+    "gulf":    dict(name="GULF_CARIBBEAN", label="Gulf and Caribbean", bbox=(8, 33, -100, -56), f=1, scale=1, borders=True, nyc=False, city_rank=2, sun=True),
+    "northeast": dict(name="NORTHEAST_US", label="Northeast US", bbox=(38.0, 47.5, -82.0, -64.0), f=1, scale=2, borders=True, nyc=True, city_rank=3),
+    "eastus":  dict(name="EAST_US", label="East Coast US", bbox=(24, 48, -90, -58), f=1, scale=1, borders=True, nyc=True, city_rank=2, sun=True),
+    "nyc":     dict(name="NYC_AREA", label="New York City area", bbox=(37.5, 44.5, -78.5, -68.5), f=1, scale=3, borders=True, nyc=True, city_rank=3),
 }
 def _fog(key, label, name):
     base = REGIONS[key]
-    return dict(base, name=name, label=label, night="fog", geo=key)
+    return dict(base, name=name, label=label, night="fog", geo=key, sun=False)
+
+
+def _wv(key, label, name):
+    return dict(REGIONS[key], name=name, label=label, wv=True, geo=key, sun=False)
 
 
 REGIONS.update({
@@ -63,6 +108,32 @@ REGIONS.update({
     "fog_gulf":   _fog("gulf", "Night fog, Gulf and Caribbean", "FOG_GULF_CARIBBEAN"),
     "fog_samer":  _fog("samer", "Night fog, South America", "FOG_SOUTH_AMERICA"),
 })
+REGIONS.update({
+    "wv_globe":  _wv("globe", "Water vapor, full disk", "WV_FD_GLOBE"),
+    "wv_namer":  _wv("namer", "Water vapor, North America", "WV_NORTH_AMERICA"),
+    "wv_eastus": _wv("eastus", "Water vapor, East Coast US", "WV_EAST_US"),
+    "wv_gulf":   _wv("gulf", "Water vapor, Gulf and Caribbean", "WV_GULF_CARIBBEAN"),
+})
+def _storm_spec():
+    """A square window that follows the storm in storm.json, or None when no storm is set / it is stale."""
+    try:
+        j = json.loads(STORM_FILE.read_text())
+        lat, lon, half = float(j["lat"]), float(j["lon"]), float(j.get("half", 5.0))
+        if time.time() - STORM_FILE.stat().st_mtime > 36 * 3600:
+            return None
+    except (OSError, ValueError, KeyError):
+        return None
+    name = str(j.get("name", "Storm"))[:40]
+    lat0, lat1 = max(-60, lat - half), min(60, lat + half)
+    lon_half = half / max(math.cos(math.radians(lat)), 0.5)
+    key = f"{lat:.1f}_{lon:.1f}".replace("-", "m")
+    return dict(name="STORM", label=f"Storm {name}", bbox=(lat0, lat1, lon - lon_half, lon + lon_half), f=1, scale=2,
+                borders=True, nyc=False, city_rank=2, geo="storm_" + key, storm=True)
+
+
+_S = _storm_spec()
+if _S:
+    REGIONS["storm"] = _S
 FOG_AGE = dt.timedelta(minutes=35)   # channels are staggered by ~30 min in the broadcast; fog moves slowly
 
 OUTLINE = dict(stroke_width=2, stroke_fill=(0, 0, 0, 200))
@@ -238,6 +309,18 @@ def fog_rgb(bt, box, f):
     return np.dstack([r, g, b])
 
 
+# C08 (6.2 um) brightness temperature -> color: cold/moist upper air white and blue, dry air warm orange
+_WV_STOPS = [(200, (250, 250, 255)), (212, (120, 235, 255)), (226, (40, 140, 235)), (240, (30, 60, 130)),
+             (250, (70, 75, 95)), (258, (125, 120, 120)), (266, (200, 160, 105)), (276, (240, 135, 45))]
+_WV_LUT = np.stack([np.interp(np.linspace(200, 276, 512), [k for k, _ in _WV_STOPS], [c[i] for _, c in _WV_STOPS])
+                    for i in range(3)], axis=-1).astype(np.float32) / 255.0
+
+
+def wv_rgb(bt8, disc):
+    idx = np.clip((bt8 - 200.0) / 76.0 * 511, 0, 511).astype(np.int32)
+    return np.where(disc[..., None], _WV_LUT[idx], 0.0)
+
+
 _MASKS = {}
 
 
@@ -363,6 +446,29 @@ def draw_lines(draw, kind, box, f, scale, color, width):
                 draw.line((pts[i], pts[i + 1]), fill=color, width=width)
 
 
+def draw_cities(draw, max_rank, box, f, scale, size, fs):
+    """Dots and names for cities up to max_rank, most important first, skipping any that would crowd a label."""
+    try:
+        font = ImageFont.load_default(size=max(12, int(fs * 0.8)))
+    except TypeError:
+        font = ImageFont.load_default()
+    r0, c0 = box[0], box[2]
+    placed = []
+    gap = fs * 3.2
+    for name, lat, lon, rank in sorted(CITIES, key=lambda c: c[3]):
+        if rank > max_rank:
+            continue
+        c, r, vis = to_pixels(np.array([lat]), np.array([lon]))
+        x, y = (c[0] - c0 + 0.5) / f * scale, (r[0] - r0 + 0.5) / f * scale
+        if not vis[0] or not (6 <= x < size[0] - 6 and 6 <= y < size[1] - 6):
+            continue
+        if any(abs(x - px) < gap * 1.5 and abs(y - py) < gap * 0.45 for px, py in placed):
+            continue
+        placed.append((x, y))
+        draw.ellipse((x - 2.5, y - 2.5, x + 2.5, y + 2.5), fill=(255, 255, 255, 230), outline=(0, 0, 0, 200))
+        draw.text((x + 6, y - fs * 0.4), name, fill=(240, 244, 250, 235), font=font, **OUTLINE)
+
+
 def font_for(width):
     fs = max(14, width // 60)
     try:
@@ -421,6 +527,8 @@ def build_overlay(spec, box, f, size, disc):
         draw_lines(d, "admin_0_boundary_lines_land", box, f, scale, (255, 235, 140, 150), lw)
         draw_lines(d, "coastline", box, f, scale, (255, 235, 140, 150), lw)
     fs, font = font_for(size[0])
+    if spec.get("city_rank"):
+        draw_cities(d, spec["city_rank"], box, f, scale, size, fs)
     if spec["nyc"]:
         c, r, vis = to_pixels(np.array([NYC[0]]), np.array([NYC[1]]))
         x, y = (c[0] - box[2] + 0.5) / f * scale, (r[0] - box[0] + 0.5) / f * scale
@@ -436,6 +544,9 @@ def geometry(key, spec, box):
     Only the sun angle and the imagery change between scans, so none of this is redone per frame."""
     f, scale = spec["f"], spec["scale"]
     gk = spec.get("geo", key)
+    if spec.get("storm"):
+        for old in sorted(CACHE.glob("storm_*"), key=lambda q: q.stat().st_mtime)[:-6]:
+            old.unlink(missing_ok=True)
     npz, png = CACHE / f"{gk}.v{GEO_VER}.npz", CACHE / f"{gk}.v{GEO_VER}.png"
     if npz.exists() and png.exists():
         try:
@@ -463,8 +574,37 @@ def geometry(key, spec, box):
     return geo
 
 
+def sun_layer(geo, spec, t, size):
+    """Faint line along the day/night terminator, plus a sun mark where the sun is overhead (if in view)."""
+    slat, slon = subsolar(t)
+    disc = geo["disc"]
+    cosz = geo["sinlat"] * math.sin(slat) + geo["coslat"] * math.cos(slat) * (
+        geo["coslon"] * math.cos(slon) + geo["sinlon"] * math.sin(slon))
+    width = 0.0011 * spec["f"]
+    a = np.where(disc, np.clip(1 - np.abs(cosz) / width, 0, 1) * 110, 0).astype(np.uint8)
+    lay = np.zeros(a.shape + (4,), np.uint8)
+    lay[..., 0], lay[..., 1], lay[..., 2], lay[..., 3] = 255, 190, 90, a
+    out = Image.fromarray(lay, "RGBA")
+    if out.size != size:
+        out = out.resize(size, Image.BILINEAR)
+    c, r, vis = to_pixels(np.array([math.degrees(slat)]), np.array([math.degrees(slon)]))
+    box = region_box(spec["bbox"], spec["f"])
+    x, y = (c[0] - box[2] + 0.5) / spec["f"] * spec["scale"], (r[0] - box[0] + 0.5) / spec["f"] * spec["scale"]
+    if vis[0] and 10 <= x < size[0] - 10 and 10 <= y < size[1] - 10:
+        d = ImageDraw.Draw(out)
+        rad = max(6, size[0] // 150)
+        d.ellipse((x - rad, y - rad, x + rad, y + rad), outline=(255, 215, 80, 235), width=2)
+        for k in range(8):
+            ang = k * math.pi / 4
+            d.line((x + math.cos(ang) * (rad + 3), y + math.sin(ang) * (rad + 3),
+                    x + math.cos(ang) * (rad + 8), y + math.sin(ang) * (rad + 8)), fill=(255, 215, 80, 235), width=2)
+    return out
+
+
 def annotate(img, geo, spec, t, mode):
     ov = geo["overlay"].copy()
+    if spec.get("sun") and not spec.get("night"):
+        ov = Image.alpha_composite(ov, sun_layer(geo, spec, t, ov.size))
     d = ImageDraw.Draw(ov)
     fs, font = font_for(img.width)
     local = t.astimezone(LOCAL)
@@ -495,12 +635,17 @@ def has_night(spec, t):
 def build_scan(t, files, wanted):
     """Load the channels for scan time t once, then render every wanted view."""
     chans = {}
+    need_ir = [k for k in wanted if not REGIONS[k].get("wv")]
     for c in ("13", "02", "01", "03"):
-        p = nearest(files, c, t)
+        p = nearest(files, c, t) if need_ir else None
         if p:
             chans[c] = load_full(p)
-    if "13" not in chans:
-        return
+    if need_ir and "13" not in chans:
+        wanted = [k for k in wanted if REGIONS[k].get("wv")]
+    wvp = nearest(files, "08", t)
+    wvbt = None
+    if any(REGIONS[k].get("wv") for k in wanted) and wvp and bt_table(wvp) is not None:
+        wvbt = (load_full(wvp), bt_table(wvp))
     bt = None
     if any(REGIONS[k].get("night") == "fog" for k in wanted):
         fi = fog_inputs(files, t)
@@ -510,9 +655,17 @@ def build_scan(t, files, wanted):
         spec = REGIONS[key]
         if spec.get("night") == "fog" and bt is None:
             continue
+        if spec.get("wv") and wvbt is None:
+            continue
+        if not spec.get("wv") and "13" not in chans:
+            continue
         box = region_box(spec["bbox"], spec["f"])
         geo = geometry(key, spec, box)
-        rgb, mode = compose(chans, box, spec["f"], t, geo, bt if spec.get("night") == "fog" else None)
+        if spec.get("wv"):
+            rgb = wv_rgb(window_bt(wvbt[0], wvbt[1], box, spec["f"]), geo["disc"])
+            mode = "water vapor 6.2 um: white/blue = moist upper air, orange = dry"
+        else:
+            rgb, mode = compose(chans, box, spec["f"], t, geo, bt if spec.get("night") == "fog" else None)
         img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
         if spec["scale"] > 1:
             img = img.resize((img.width * spec["scale"], img.height * spec["scale"]), Image.LANCZOS)
@@ -545,7 +698,8 @@ def main():
     done = 0
     for t, _p in reversed(files["13"]):
         todo = [k for k in a.views if (a.force or not out_path(k, REGIONS[k], t).exists())
-                and (REGIONS[k].get("night") != "fog" or (fog_inputs(files, t) and has_night(REGIONS[k], t)))]
+                and (REGIONS[k].get("night") != "fog" or (fog_inputs(files, t) and has_night(REGIONS[k], t)))
+                and (not REGIONS[k].get("wv") or nearest(files, "08", t))]
         if not todo:
             continue
         build_scan(t, files, todo)

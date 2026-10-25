@@ -46,6 +46,7 @@ def _load(name):
 watch = _load("watch")
 share = _load("share")
 sysstats = _load("sysstats")
+products = _load("products")
 HOME = Path.home()
 GOES_DIR = HOME / "goes"
 DATA_DIR = GOES_DIR / "data"
@@ -838,6 +839,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(share_status())
             if u.path == "/api/forecast":
                 return self.send_json({"offices": forecast_data()})
+            if u.path == "/api/products/summary":
+                return self.send_json(products.summary(min(max(float(q.get("hours", ["48"])[0]), 1), 72)))
+            if u.path == "/api/products":
+                return self.send_json(products.search(
+                    q.get("cat", [""])[0], q.get("office", [""])[0], q.get("q", [""])[0][:80],
+                    min(max(float(q.get("hours", ["48"])[0]), 1), 72), min(int(q.get("limit", ["50"])[0]), 100),
+                    max(int(q.get("offset", ["0"])[0]), 0), q.get("warnings", [""])[0] == "1"))
+            if u.path == "/api/product":
+                return self.send_json(products.product(q.get("name", [""])[0]))
+            if u.path == "/api/alerts/active":
+                offs = [o for o in q.get("office", [""])[0].split(",") if o.strip()]
+                return self.send_json({"alerts": products.active_alerts(offs or None)})
             if u.path == "/api/mail":
                 return self.send_json(mail_status())
             if u.path == "/api/history":

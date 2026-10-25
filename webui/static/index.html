@@ -105,7 +105,6 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
   <h1>GOES Control</h1>
   <span class="pill" id="p-recv">goesrecv: …</span>
   <span class="pill" id="p-proc">goesproc: …</span>
-  <span class="pill" id="p-sys"></span>
 </header>
 <nav id="tabs"></nav>
 <main>
@@ -264,6 +263,15 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
       <option value="gulf">Gulf &amp; Caribbean</option>
       <option value="samer">South America</option>
       <option value="globe">Full disk</option>
+      <optgroup label="Water vapor (jet streams, dry air)">
+        <option value="wv_namer">Water vapor: North America</option>
+        <option value="wv_eastus">Water vapor: East Coast US</option>
+        <option value="wv_gulf">Water vapor: Gulf &amp; Caribbean</option>
+        <option value="wv_globe">Water vapor: Full disk</option>
+      </optgroup>
+      <optgroup label="Storm (only while an advisory is active)">
+        <option value="storm">Storm-following view</option>
+      </optgroup>
       <optgroup label="Night fog (after dark)">
         <option value="fog_northeast">Fog: Northeast US</option>
         <option value="fog_eastus">Fog: East Coast US</option>
@@ -316,6 +324,29 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 
 <section id="forecast">
   <div class="card"><p class="msg" id="fc-msg">Loading…</p><div id="fc-out"></div></div>
+</section>
+
+<section id="weather">
+  <div id="wx-alerts"></div>
+  <div class="card">
+    <div class="row">
+      <select id="wx-cat" style="width:auto"><option value="">All products</option></select>
+      <select id="wx-office" style="width:auto"><option value="">All offices</option></select>
+      <select id="wx-hours" style="width:auto"><option value="6">6 h</option><option value="24">24 h</option><option value="48" selected>48 h</option><option value="72">72 h</option></select>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="wx-q" placeholder="Search text, e.g. fog, Montauk" style="flex:1;min-width:140px">
+      <button class="b" id="wx-go">Search</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="b ghost" id="wx-mine">My area</button>
+      <button class="b ghost" id="wx-warn">Warnings &amp; statements</button>
+      <button class="b ghost" id="wx-afd">Forecast discussions</button>
+    </div>
+    <p class="msg" id="wx-msg"></p>
+  </div>
+  <div id="wx-list"></div>
+  <div class="row"><button class="b ghost" id="wx-more" style="display:none">Load more</button></div>
 </section>
 
 <section id="mail">
@@ -393,7 +424,7 @@ const api = async (path, body) => {
 };
 
 // ---- tabs
-const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['mail','Mail'],['logs','Logs']];
+const TABS = [['aim','Aim'],['signal','Signal'],['pi','Pi'],['control','Control'],['config','Config'],['globe','Views'],['gallery','Gallery'],['images','Files'],['forecast','Forecast'],['weather','Weather'],['mail','Mail'],['logs','Logs']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -410,6 +441,7 @@ function show(id) {
   if (id === 'globe') loadGlobe();
   if (id === 'mail') { loadMail(); loadShare(); }
   if (id === 'forecast') loadForecast();
+  if (id === 'weather') loadWeather();
   if (id === 'signal') loadSignal();
   if (id === 'pi') loadPi();
 }
@@ -436,7 +468,6 @@ async function pollStatus() {
       document.querySelector(`[data-act="${n}/restart"]`).disabled = !s.running;
     }
     const sy = status.system;
-    $('#p-sys').textContent = `${sy.cpu_temp ? sy.cpu_temp.toFixed(0)+'°C · ' : ''}${fmtBytes(sy.disk_free)} free`;
     $('#sys').innerHTML = `CPU temp: ${sy.cpu_temp ?? '?'} °C<br>Load: ${sy.load.toFixed(2)}<br>Disk free: ${fmtBytes(sy.disk_free)} of ${fmtBytes(sy.disk_total)}`;
     const run = status.goesrecv.running;
     const t = $('#aim-toggle');
@@ -1041,6 +1072,68 @@ async function loadForecast() {
     });
   });
 }
+
+// ---- weather products (EMWIN text bulletins)
+let wxOffset = 0, wxReady = false, wxMine = [];
+const wxFmt = t => new Date(t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+async function loadWeather() {
+  if (!wxReady) {
+    const s = await api('/api/products/summary');
+    if (s.error) { $('#wx-msg').textContent = s.error; return; }
+    wxMine = s.mine;
+    s.categories.forEach(c => { const o = document.createElement('option'); o.value = c.code; o.textContent = `${c.label} (${c.n})`; $('#wx-cat').append(o); });
+    s.offices.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; $('#wx-office').append(o); });
+    wxReady = true;
+    $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
+    wxSearch(true);
+  }
+  loadWxAlerts();
+}
+async function loadWxAlerts() {
+  const r = await api('/api/alerts/active');
+  const box = $('#wx-alerts'); box.innerHTML = '';
+  if (r.error) return;
+  const c = document.createElement('div');
+  c.className = 'banner ' + (r.alerts.length ? (r.alerts.some(a => a.level === 'W') ? 'bad' : 'warn') : 'good');
+  c.textContent = r.alerts.length ? r.alerts.length + ' active alert' + (r.alerts.length > 1 ? 's' : '') : 'No active warnings';
+  const sm = document.createElement('small');
+  sm.textContent = r.alerts.length ? r.alerts.map(a => `${a.name} (${a.office}${a.ends ? ', until ' + wxFmt(a.ends) : ''})`).join(' · ')
+    : 'Warnings, watches and advisories in force for your offices (' + wxMine.join(', ') + ')';
+  c.append(sm); box.append(c);
+}
+async function wxSearch(reset) {
+  if (reset) { wxOffset = 0; $('#wx-list').innerHTML = ''; }
+  const p = new URLSearchParams({cat: $('#wx-cat').value, office: $('#wx-office').value, q: $('#wx-q').value,
+    hours: $('#wx-hours').value, limit: 40, offset: wxOffset, warnings: wxWarnOnly ? 1 : 0});
+  $('#wx-msg').textContent = 'Searching…';
+  const r = await api('/api/products?' + p);
+  if (r.error) { $('#wx-msg').textContent = r.error; return; }
+  r.items.forEach(it => {
+    const d = document.createElement('div'); d.className = 'mrow'; d.style.cssText = 'cursor:pointer;display:block';
+    const h = document.createElement('div'); h.style.fontWeight = '600'; h.textContent = `${it.label} · ${it.office}`;
+    const m = document.createElement('div'); m.className = 'msg'; m.style.margin = '2px 0';
+    m.textContent = wxFmt(it.t) + (it.title ? '  ·  ' + it.title : '');
+    const pre = document.createElement('pre'); pre.style.display = 'none';
+    d.append(h, m, pre);
+    d.onclick = async () => {
+      if (pre.style.display === 'none') {
+        if (!pre.textContent) { const t = await api('/api/product?name=' + encodeURIComponent(it.name)); pre.textContent = t.text || t.error; }
+        pre.style.display = '';
+      } else pre.style.display = 'none';
+    };
+    $('#wx-list').append(d);
+  });
+  wxOffset += r.items.length;
+  $('#wx-more').style.display = r.more ? '' : 'none';
+  $('#wx-msg').textContent = $('#wx-list').children.length ? '' : 'Nothing matches in that time window.';
+}
+let wxWarnOnly = false;
+$('#wx-go').onclick = () => { wxWarnOnly = false; wxSearch(true); };
+$('#wx-more').onclick = () => wxSearch(false);
+$('#wx-q').onkeydown = e => { if (e.key === 'Enter') { wxWarnOnly = false; wxSearch(true); } };
+$('#wx-mine').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = ''; $('#wx-office').value = wxMine[0] || ''; $('#wx-q').value = ''; wxSearch(true); };
+$('#wx-warn').onclick = () => { wxWarnOnly = true; $('#wx-cat').value = ''; $('#wx-office').value = ''; wxSearch(true); };
+$('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true); };
 
 // ---- logs
 async function pollLog() {

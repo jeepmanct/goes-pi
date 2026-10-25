@@ -24,6 +24,7 @@ VIEWS = {  # name -> label
     "nyc": "New York City", "northeast": "Northeast US", "fog_northeast": "Northeast fog (night)",
     "eastus": "East Coast", "namer": "North America", "gulf": "Gulf of Mexico",
     "samer": "South America", "globe": "Full disk globe",
+    "wv_namer": "Water vapor, North America", "wv_globe": "Water vapor, full disk",
 }
 HOURS = 24          # Views player + GIF window
 GALLERY_HOURS = 72  # how far back the Gallery goes

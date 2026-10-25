@@ -8,6 +8,7 @@ Started from app.py with start(procs). Everything here runs in daemon threads.
 import datetime as dt
 import json
 import re
+import statistics
 import shutil
 import smtplib
 import threading
@@ -346,6 +347,117 @@ def _wx_loop():
             print("weather alert error:", e, flush=True)
 
 
+# ---- long-term trend and daily health (phone push only; not emailed to the briefing list) --------------
+
+HEALTH_SENT = GOES_DIR / ".health-sent"
+HEALTH_TIME = (7, 30)     # local (US Eastern) time of the daily health push
+LOCAL = None
+
+
+def _stats(rows):
+    locked = [r for r in rows if (r.get("ok") or 0) > 20 and r.get("vit") is not None]
+    return {"n": len(rows), "lock": len(locked) / len(rows) if rows else None,
+            "vit": statistics.median(r["vit"] for r in locked) if len(locked) >= 30 else None}
+
+
+def trend(now=None):
+    """Last 24 h of goesrecv samples against the 6 days before them (locked minutes only for Viterbi errors)."""
+    now = now or time.time()
+    rows = []
+    try:
+        for ln in HISTORY.read_text().splitlines():
+            try:
+                rows.append(json.loads(ln))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return {"recent": _stats([r for r in rows if r["t"] > now - 86400]),
+            "base": _stats([r for r in rows if now - 7 * 86400 < r["t"] <= now - 86400])}
+
+
+def trend_problem(tr):
+    """A sentence if the last day is clearly worse than the week before, else None."""
+    rec, base = tr["recent"], tr["base"]
+    if rec["n"] < 600 or base["n"] < 3 * 600:       # need ~10 h now and ~2.5 days of baseline running time
+        return None
+    if rec["vit"] and base["vit"] and rec["vit"] > base["vit"] * 1.35 and rec["vit"] - base["vit"] > 15:
+        return (f"Signal quality has dropped: median Viterbi errors {rec['vit']:.0f} over the last 24 h against "
+                f"{base['vit']:.0f} the previous six days. Check whether the dish was knocked, is wet, snowy or "
+                "blocked by foliage, and check the cable and SAWbird+ connections.")
+    if rec["lock"] is not None and base["lock"] is not None and rec["lock"] < min(0.8, base["lock"] - 0.25):
+        return (f"The receiver was locked only {rec['lock'] * 100:.0f}% of the last 24 h against "
+                f"{base['lock'] * 100:.0f}% the previous six days.")
+    return None
+
+
+def push_only(title, body, key=None, every=24 * 3600, priority="default", tags="bar_chart"):
+    """ntfy push to the owner's phone, rate-limited like notify(). Returns True if sent."""
+    now = time.monotonic()
+    with _lock:
+        if key and key in _alerts and now - _alerts[key] < every:
+            return False
+        if key:
+            _alerts[key] = now
+    try:
+        cfg = tomllib.loads(MAIL_CONF.read_text())
+        if not cfg.get("alerts", {}).get("ntfy_topic"):
+            return False
+        _digest().push(cfg, title, body[:900], priority, tags)
+        print("push sent:", title, flush=True)
+        return True
+    except Exception as e:
+        print("push failed:", title, "-", e, flush=True)
+        return False
+
+
+def health_text(now=None):
+    now = now or time.time()
+    tr = trend(now)
+    rec, base = tr["recent"], tr["base"]
+    bits = []
+    if rec["lock"] is not None:
+        bits.append(f"Locked {rec['lock'] * 100:.0f}% of the last 24 h" + (f" (week before {base['lock'] * 100:.0f}%)" if base["lock"] is not None else ""))
+    if rec["vit"]:
+        bits.append(f"Viterbi errors {rec['vit']:.0f}" + (f" (week before {base['vit']:.0f}; lower is better)" if base["vit"] else ""))
+    try:
+        frames = [t for t, _p in _digest().frames("globe") if now - t.timestamp() <= 86400]
+        bits.append(f"{len(frames)} full-disk frames in 24 h")
+    except Exception:
+        pass
+    du = shutil.disk_usage(GOES_DIR)
+    bits.append(f"disk {100 - du.free / du.total * 100:.0f}% used, {du.free / 1e9:.0f} GB free")
+    try:
+        bits.append(f"CPU {int(Path('/sys/class/thermal/thermal_zone0/temp').read_text()) / 1000:.0f} C")
+    except OSError:
+        pass
+    restarts = len(_state["restarts"])
+    if restarts:
+        bits.append(f"{restarts} restart{'s' if restarts > 1 else ''} in the last hour")
+    return ". ".join(bits) + "."
+
+
+def _trend_loop():
+    from zoneinfo import ZoneInfo
+    local = ZoneInfo("America/New_York")
+    time.sleep(120)
+    while True:
+        try:
+            problem = trend_problem(trend())
+            if problem:
+                push_only("GOES: signal trend", problem, key="trend", every=24 * 3600, priority="high",
+                          tags="chart_with_downwards_trend")
+            now = dt.datetime.now(local)
+            today = f"{now:%Y-%m-%d}"
+            done = HEALTH_SENT.read_text().strip() if HEALTH_SENT.exists() else ""
+            if done != today and (now.hour, now.minute) >= HEALTH_TIME and now.hour < 12:
+                if push_only("GOES daily health", health_text()):
+                    HEALTH_SENT.write_text(today)
+        except Exception as e:
+            print("trend error:", e, flush=True)
+        time.sleep(1800)
+
+
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()
