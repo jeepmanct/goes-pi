@@ -27,6 +27,8 @@ VIEWS = {  # name -> label
     "wv_namer": "Water vapor, North America", "wv_globe": "Water vapor, full disk",
     "ct_stratford": "Cloud tops, Stratford", "ct_northeast": "Cloud tops, Northeast US",
     "fog_stratford": "Stratford fog (night)", "meso1": "Mesoscale 1 (1-minute)",
+    "sst_stratford": "Surface temperature, Stratford and the Sound", "sst_eastus": "Surface temperature, East Coast",
+    "rad_stratford": "Radar over clouds, Stratford", "rad_northeast": "Radar over clouds, Northeast US",
 }
 MESO_MAX = 60       # mesoscale frames are about a minute apart, so the player only gets the newest few
 HOURS = 24          # Views player + GIF window
@@ -206,7 +208,7 @@ HOW = """
 <h2>The short version</h2>
 <p>A weather satellite 36,000 km above the equator photographs the Earth every few minutes, sends the pictures
 down to a NOAA ground station, and NOAA sends selected pictures back up to the satellite, which rebroadcasts them
-to anyone with a dish. This page shows what a small dish in the Northeast US picked up from that rebroadcast.</p>
+to anyone with a dish. This page shows what a small dish in the Northeast US picked up from that rebroadcast, plus the National Weather Service radar, forecasts and bulletins that ride along in it.</p>
 <div class="flow"><span>GOES-19 satellite</span><i>&rarr;</i><span>NOAA ground station</span><i>&rarr;</i><span>back up to GOES-19</span><i>&rarr;</i>
 <span>home dish</span><i>&rarr;</i><span>Raspberry Pi</span><i>&rarr;</i><span>this page</span></div>
 
@@ -249,18 +251,22 @@ images and weather text files.</li>
 views such as New York and the Northeast. The &ldquo;fog&rdquo; view compares two infrared channels at night, where fog and low cloud show up in aqua.
 The &ldquo;cloud tops&rdquo; views colour the infrared channel by cloud-top temperature, so the coldest, highest storm tops stand out in red and magenta.
 The &ldquo;mesoscale&rdquo; view is a small box the satellite aims at active weather and refreshes about once a minute; its location changes as the weather moves.
+The &ldquo;surface temperature&rdquo; views estimate how warm the ground and water are by comparing two infrared channels, wherever the sky is clear (gray is cloud); the water numbers are checked against National Weather Service readings at the Jersey shore and are good to about 3&deg;F.
+The &ldquo;radar over clouds&rdquo; views lay the National Weather Service radar, which also arrives in the satellite broadcast, over the infrared picture.
 The colour pictures are synthesised from the visible and infrared channels, so greens and blues are an approximation, not a photo.</li>
+<li><b>Number crunching.</b> The <i>Insights</i> tab is worked out from the same data: the Sound&rsquo;s water temperature from the infrared channels (checked against National Weather Service readings at the Jersey shore), cloud cover over Stratford compared with the Bridgeport airport reports, and a running scorecard of how close the National Weather Service point forecasts come to what the airport then measures.</li>
 </ol>
 
 <h2>6. Getting it to you</h2>
 <p>A small web server on the Pi serves these read-only pages through an encrypted Tailscale tunnel, so the Pi never has to open
 a port on the home router. The link you used is private to the people it was sent to. Nothing you do here can control the
-station, and only the pictures shown are exposed.</p>
+station, and only the pictures and summary numbers shown here are exposed.</p>
 
 <h2>Good to know</h2>
 <ul>
 <li>Times are shown in your device&rsquo;s local time. Pictures lag the actual scene by roughly 15&ndash;30 minutes because of
 the trip up, down and around.</li>
+<li>The Insights numbers are estimates, not measurements: water temperature from space is good to about 3&deg;F, and cloud cover seen from above will not always match what an observer on the ground sees. Scores start from the day the station began keeping them, so they firm up over time.</li>
 <li>Gaps happen: rain or snow on the dish, a power or internet blip, or the satellite&rsquo;s own schedule can drop images.</li>
 <li>Imagery &copy; NOAA/NESDIS (public domain), received and processed at home. Forecast text is from the National Weather Service.</li>
 </ul>
@@ -298,6 +304,12 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #wx p{color:var(--fg);font-size:15px;margin:5px 0}#wx pre{background:var(--bg);border-radius:8px;padding:8px;overflow:auto;font-size:13px}
 #wx .al{padding:10px 12px;border-radius:8px;font-size:15px;font-weight:600}#wx .al.ok{background:#2ea04322;border:1px solid #2ea043}
 #wx .al.bad{background:#da363322;border:1px solid #da3633}#wx #cbar{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+#ins h2{font-size:18px;margin:16px 0 2px}#ins p{color:var(--fg);font-size:15px;margin:5px 0}#ins .iss{color:var(--mut);font-size:13px}
+#ins .g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:8px 0}#ins .m{background:var(--bg);border-radius:8px;padding:8px}
+#ins .m b{font-size:24px;display:block}#ins table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0}#ins td,#ins th{padding:3px 6px 3px 0;text-align:right}
+#ins td:first-child,#ins th:first-child{text-align:left}#ins th{color:var(--mut);font-weight:600}
+#ins .br{display:flex;align-items:center;gap:8px;font-size:13px;margin:3px 0}#ins .br span:first-child{width:56px;color:var(--mut)}#ins .br span:last-child{width:44px;text-align:right}
+#ins .br i{flex:1;background:var(--bg);border-radius:4px;height:10px;display:block}#ins .br u{display:block;height:10px;border-radius:4px;background:var(--acc)}
 #hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 4px}#hd h1{margin:0}
 #th{font-size:12px;padding:3px 11px;min-height:0;border-radius:99px;color:var(--mut)}
 #v,#gv{width:100%;max-width:100%;min-width:0;box-sizing:border-box;text-overflow:ellipsis}
@@ -306,7 +318,7 @@ button,a.b,select{cursor:pointer;min-height:40px}
 </style></head><body><main><div id="hd"><h1>GOES-19 East satellite</h1><button id="th">How it works</button></div>
 <p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.<span id="lu"></span></p>
 <div id="stale" style="display:none"></div>
-<div id="tabs"><button id="tv" class="on">Views</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button></div>
+<div id="tabs"><button id="tv" class="on">Views</button><button id="ti">Insights</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button></div>
 <div class="card" id="views"><select id="v">%OPTS%</select>
 <img id="im" alt="GOES-19 view"><div id="bar"><button id="play">Play</button>
 <a class="b" id="gif" download>GIF</a><input type="range" id="s" min="0" max="0" value="0"><span id="t"></span></div>
@@ -318,6 +330,7 @@ button,a.b,select{cursor:pointer;min-height:40px}
 <h2>Radar and weather maps</h2><div id="cbar"><select id="cs"></select><button id="cp">Pause</button></div>
 <img id="ci" alt="NWS weather map" style="display:none"><input type="range" id="csl" min="0" max="0" value="0" style="width:100%;margin-top:8px;display:none">
 <p id="cm"></p></div>
+<div class="card" id="ins" style="display:none"><p id="insm">Loading…</p><div id="inst"></div></div>
 <div class="card" id="how" style="display:none">%HOW%</div>
 <div id="lb" style="display:none"><img id="lbi"><div><a class="b" id="lbs">Save</a> <button id="lbc">Close</button></div></div></main><script>
 const V=%VJSON%;
@@ -336,15 +349,45 @@ await Promise.all(F.map(f=>new Promise(r=>{const i=new Image();i.onload=i.onerro
 $('#play').disabled=false;$('#play').textContent='Pause';let i=+$('#s').value>=F.length-1?0:+$('#s').value;show(i);
 T=setInterval(()=>{i=(i+1)%F.length;show(i)},300)};
 const fmt=t=>{const d=new Date(t*1000);return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-function tab(n){const ids=['views','gal','how','fc','wx'],btn=['tv','tg','th','tf','tw'];
+function tab(n){const ids=['views','gal','how','fc','wx','ins'],btn=['tv','tg','th','tf','tw','ti'];
 ids.forEach((id,i)=>{$('#'+id).style.display=i==n?'':'none';$('#'+btn[i]).className=i==n?'on':''});
-if(n)stop();if(n!=4)stopC();if(n==3)forecast();if(n==1&&!$('#grid').children.length)gal(true);if(n==4)weather()}
-$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);$('#tw').onclick=()=>tab(4);
+if(n)stop();if(n!=4)stopC();if(n==3)forecast();if(n==1&&!$('#grid').children.length)gal(true);if(n==4)weather();if(n==5)insights()}
+$('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);$('#tw').onclick=()=>tab(4);$('#ti').onclick=()=>tab(5);
 let fdone=0;
 async function forecast(){if(fdone&&Date.now()-fdone<120000)return;fdone=Date.now();
 const r=await(await fetch(B+'api/forecast')).json();const h=r.offices.map(o=>'<h2>'+esc(o.office)+'</h2><div class="iss">'+esc(o.issued)+(o.age_h>12?' &middot; '+Math.round(o.age_h)+' h old':'')+'</div>'+
 o.sections.map(s=>'<h3>'+esc(s.head)+'</h3>'+s.paras.map(p=>'<p>'+esc(p)+'</p>').join('')).join('')).join('');
 $('#ft').innerHTML=h;$('#fm').textContent=r.offices.length?'The National Weather Service area forecast discussions, as received by the satellite broadcast. Written by forecasters for a technical audience.':'No forecast discussions have arrived yet.'}
+let idone=0;
+async function insights(){if(idone&&Date.now()-idone<120000)return;idone=Date.now();
+let r;try{r=await(await fetch(B+'api/insights')).json()}catch(e){$('#insm').textContent='Not available right now.';return}
+if(!r.updated){$('#insm').textContent='Nothing to show yet.';return}
+const ago=t=>{const m=Math.round((Date.now()-Date.parse(t))/60000);return m<90?m+' min ago':Math.round(m/60)+' h ago'};
+const tile=(l,v,s)=>'<div class="m"><span class="iss">'+esc(l)+'</span><b>'+esc(v)+'</b><span class="iss">'+esc(s||'')+'</span></div>';
+const bars=a=>a.map(x=>'<div class="br"><span>'+esc(x[0])+'</span><i><u style="width:'+Math.max(1,Math.min(100,x[1]))+'%"></u></i><span>'+esc(x[1])+'%</span></div>').join('');
+const tbl=(hd,rows)=>'<table><tr>'+hd.map(x=>'<th>'+esc(x)+'</th>').join('')+'</tr>'+rows.map(q=>'<tr>'+q.map(c=>'<td>'+(c==null?'&ndash;':esc(c))+'</td>').join('')+'</tr>').join('')+'</table>';
+const pic=async v=>{try{const f=(await(await fetch(B+'api/'+v)).json()).frames;return f.length?'<img src="'+B+'img/'+v+'/'+f[f.length-1][1]+'" alt="">':''}catch(e){return ''}};
+const [p1,p2]=await Promise.all([pic('sst_stratford'),pic('rad_stratford')]);
+const s=r.sst||{},d=r.radar||{},c=r.clouds||{},f=r.forecast||{};let h='';
+h+='<h2>Water temperature, from the satellite</h2>';
+if(s.latest)h+='<div class="g">'+tile('Long Island Sound',s.latest.sound_f.toFixed(0)+'°F',s.sound_24h?'last 24 h: '+s.sound_24h.min.toFixed(0)+'–'+s.sound_24h.max.toFixed(0)+'°F':'')+
+ Object.entries(s.latest.points||{}).map(([k,v])=>tile(k,v.toFixed(0)+'°F')).join('')+'</div>';
+h+=p1+'<p class="iss">Estimated from two infrared channels where the sky is clear; gray is cloud. Pixels along the coast mix land and water, so open water is the most reliable. '+
+ (s.pairs?'Checked against '+s.pairs+' National Weather Service water readings at the Jersey shore: average error '+(s.mean_error_f>0?'+':'')+s.mean_error_f+'°F. ':'')+'Expect about ±3°F.</p>';
+h+='<h2>Radar near Stratford</h2>';
+const lt=d.latest;h+='<div class="g">'+tile('Right now',lt&&lt.max25!=null?Math.round(lt.max25)+' dBZ':'Dry',lt&&lt.max25!=null?'strongest echo within 25 km':'no echo within 25 km')+
+ tile('Last 24 hours',d.wet_frames_24h?Math.round(d.max_dbz_24h)+' dBZ':'Dry',d.wet_frames_24h?d.wet_frames_24h+' of '+d.frames_24h+' radar frames showed rain':(d.frames_24h||0)+' radar frames, no rain')+'</div>'+p2;
+h+='<h2>Cloud cover over Stratford</h2>';
+if(c.scans){h+='<div class="g">'+tile('Now',c.latest.cloud+'%',ago(c.latest.t))+tile('Average',c.mean_cloud+'%',c.days.length+' day(s) so far')+
+ tile('Agrees with airport',c.agreement.pct==null?'–':c.agreement.pct+'%',c.agreement.n+' comparisons')+'</div>'+
+ '<div class="iss">By day</div>'+bars(c.days.slice(-14).map(x=>[x.date.slice(5),x.cloud]))+'<div class="iss" style="margin-top:8px">By hour of day (Eastern)</div>'+bars(c.by_hour.map(x=>[x.hour+':00',x.cloud]))}
+else h+='<p class="iss">Still collecting.</p>';
+h+='<h2>How good is the forecast?</h2>';
+if(f.buckets&&f.buckets.length){if(f.headline)h+='<p>Temperature forecasts for the next 24 hours have been off by <b>'+f.headline.temp_mae_f+'°F</b> on average ('+f.headline.n+' checks this week).</p>';
+ h+=tbl(['Looking ahead','Checks','Temp error °F','Wind error mph'],f.buckets.map(b=>[b.label,b.n,b.temp_mae,b.wind_mae]))+
+ '<p class="iss">Each point forecast from the National Weather Service is saved when issued and compared with the Bridgeport airport report for the time it was meant for.</p>'}
+else h+='<p class="iss">Still collecting.</p>';
+$('#inst').innerHTML=h;$('#insm').textContent='Worked out from this station’s own data. Updated '+ago(r.updated)+'.'}
 let wdone=0,CH=[],CT=null,cinit=false;
 function wblock(title,note,rows){return '<h2>'+esc(title)+'</h2>'+(note?'<div class="iss">'+esc(note)+'</div>':'')+rows.map(r=>'<p>'+(r[1]===undefined?esc(r[0]):'<b>'+esc(r[0])+'</b> '+esc(r[1]))+'</p>').join('')}
 async function weather(){if(wdone&&Date.now()-wdone<120000){return}wdone=Date.now();
@@ -443,6 +486,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = _forecast_fn() if _forecast_fn else []
                 return self.reply(200, json.dumps({"offices": data}).encode(), "application/json",
                                   {"Cache-Control": "max-age=120"})
+            if rest == "api/insights":
+                return self.reply(200, json.dumps(insights_public()).encode(), "application/json", {"Cache-Control": "max-age=120"})
             if rest == "api/weather" and _wx:
                 return self.reply(200, json.dumps(self.wx_data()).encode(), "application/json", {"Cache-Control": "max-age=60"})
             if rest == "api/charts" and _wx:
@@ -507,6 +552,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(500, b"error")
             except OSError:
                 pass
+
+
+INSIGHTS_FILE = Path.home() / "goes" / "insights.json"
+
+
+def insights_public():
+    """The parts of insights.json that are fine to show on the share page (nothing about the receiver itself)."""
+    try:
+        d = json.loads(INSIGHTS_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+    keep = {"sst": ("latest", "sound_24h", "pairs", "mean_error_f"),
+            "radar": ("latest", "frames_24h", "wet_frames_24h", "max_dbz_24h"),
+            "clouds": ("scans", "latest", "days", "by_hour", "agreement", "mean_cloud"),
+            "forecast": ("headline", "buckets")}
+    out = {"updated": d.get("updated")}
+    for sec, keys in keep.items():
+        if isinstance(d.get(sec), dict):
+            out[sec] = {k: d[sec][k] for k in keys if k in d[sec]}
+    return out
 
 
 def start(frames_fn, gif_fn, forecast_fn=None, icon=None, wx=None):

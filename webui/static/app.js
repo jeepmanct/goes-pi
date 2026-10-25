@@ -7,8 +7,8 @@ const api = async (path, body) => {
 
 // ---- tabs
 // Everyday tabs sit in the bar; the admin ones are in the More menu.
-const TABS = [['aim','Aim'],['signal','Signal'],['globe','Views'],['weather','Weather'],['skywarn','Skywarn'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
-const MORE = [['insights','Insights'],['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
+const TABS = [['globe','Views'],['insights','Insights'],['weather','Weather'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
+const MORE = [['aim','Aim'],['signal','Signal'],['skywarn','Skywarn'],['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -57,9 +57,7 @@ function show(id) {
   if (id === 'pi') loadPi();
   if (id === 'insights') loadInsights();
 }
-let startTab = 'aim';
-try { startTab = localStorage.tab || 'aim'; } catch {}
-if (![...TABS, ...MORE].some(([k]) => k === startTab)) startTab = 'aim';     // e.g. a remembered tab that no longer exists
+let startTab = 'weather';     // always open on Weather; the tab you leave on is no longer restored
 
 // ---- status
 let status = {};
