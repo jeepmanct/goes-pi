@@ -5,6 +5,54 @@ const api = async (path, body) => {
   return r.json();
 };
 
+// ---- units (US / metric), remembered per browser
+const Units = (() => {
+  let metric = false;
+  try { metric = localStorage.units === 'metric'; } catch {}
+  const r0 = v => Math.round(v);
+  const u = {
+    get metric() { return metric; },
+    set(m) { metric = m; try { localStorage.units = m ? 'metric' : 'us'; } catch {} },
+    tu: () => metric ? '°C' : '°F', su: () => metric ? 'km/h' : 'mph', pu: () => metric ? 'hPa' : 'inHg', du: () => metric ? 'km' : 'mi',
+    t: f => f == null ? f : metric ? Math.round((f - 32) * 50 / 9) / 10 : f,       // temperature, F in
+    dt: f => f == null ? f : metric ? Math.round(f * 50 / 9) / 10 : f,             // temperature difference
+    wmph: v => v == null ? v : metric ? r0(v * 1.609344) : v,
+    wkt: v => v == null ? v : metric ? r0(v * 1.852) : r0(v * 1.150779),
+    p: v => v == null ? v : metric ? Math.round(v * 33.8639 * 10) / 10 : v,
+    d: v => v == null ? v : metric ? Math.round(v * 1.609344) : v,
+    // convert units inside NWS free text
+    text(s) {
+      if (!metric || !s) return s;
+      const F = x => Math.round((x - 32) * 5 / 9);
+      return String(s)
+        .replace(/(-?\d+)\s*°\s*F\b/g, (m, a) => F(+a) + '°C')
+        .replace(/\b(\d+) to (\d+) mph/g, (m, a, b) => r0(a * 1.609344) + ' to ' + r0(b * 1.609344) + ' km/h')
+        .replace(/\b(\d+) mph/g, (m, a) => r0(a * 1.609344) + ' km/h')
+        .replace(/\b(\d+) kt\b/g, (m, a) => r0(a * 1.852) + ' km/h')
+        .replace(/(dew point )(-?\d+)°/g, (m, a, b) => a + F(+b) + '°')
+        .replace(/\b(\d+) mi\b/g, (m, a) => r0(a * 1.609344) + ' km')
+        .replace(/\b(?:(to|into) |in |near |around )(?:the )?(?:(lower|mid|upper) )?(\d)0s\b/gi, (m, t, w, d) => (t ? t + ' ' : '') + 'around ' + F(+d * 10 + ({lower: 2, mid: 5, upper: 8}[(w || '').toLowerCase()] ?? 5)) + '°C')
+        .replace(/\b(high|low|highs|lows)( near| around| of)? (-?\d+)\b(?!\s*°)/gi, (m, a, b, c) => a + (b || '') + ' ' + F(+c) + '°C')
+        .replace(/\b(\d+) to (\d+) inch(?:es)?\b/g, (m, a, b) => (a * 2.54).toFixed(0) + ' to ' + (b * 2.54).toFixed(0) + ' cm')
+        .replace(/\b(\d+(?:\.\d+)?) (?:inch|inches)\b/g, (m, a) => (a * 2.54).toFixed(0) + ' cm')
+        .replace(/\b(\d+) ft\b/g, (m, a) => (a * 0.3048).toFixed(1) + ' m')
+        .replace(/(\d+(?:\.\d+)?) inHg/g, (m, a) => (a * 33.8639).toFixed(1) + ' hPa');
+    },
+  };
+  return u;
+})();
+function unitsRefresh() {
+  const b = $('#units-btn'); if (b) b.textContent = Units.metric ? '°C · km/h' : '°F · mph';
+  const active = document.querySelector('section.active'); if (active) show(active.id);
+  if (typeof loadWeather === 'function' && !active) loadWeather();
+}
+{
+  const b = document.createElement('button'); b.id = 'units-btn'; b.className = 'pill'; b.style.cssText = 'margin-left:auto;cursor:pointer;background:none';
+  b.title = 'Switch between US and metric units';
+  b.onclick = () => { Units.set(!Units.metric); unitsRefresh(); };
+  document.querySelector('header').append(b); b.textContent = Units.metric ? '°C · km/h' : '°F · mph';
+}
+
 // ---- tabs
 // Everyday tabs sit in the bar; the admin ones are in the More menu.
 const TABS = [['globe','Views'],['insights','Insights'],['weather','Weather'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
@@ -807,13 +855,13 @@ async function loadPointForecast() {
   $('#pf-title').textContent = 'Forecast for ' + r.name.replace(/-/g, ', ');
   $('#pf-note').textContent = 'National Weather Service point forecast, ' + r.issued + '. Every 3 hours for the first days, then every 6.';
   const pts = r.points;
-  lineChart('#pf-temp', [{label: 'Temp °F', color: '--warn', pts: pts.map(p => [p.t, p.temp])}, {label: 'Dew point', color: '--accent', pts: pts.map(p => [p.t, p.dew])}], {now: true});
-  lineChart('#pf-wind', [{label: 'Wind mph', color: '--good', pts: pts.map(p => [p.t, p.wind_mph])}], {now: true, lo: 0});
+  lineChart('#pf-temp', [{label: 'Temp ' + Units.tu(), color: '--warn', pts: pts.map(p => [p.t, Units.t(p.temp)])}, {label: 'Dew point', color: '--accent', pts: pts.map(p => [p.t, Units.t(p.dew)])}], {now: true});
+  lineChart('#pf-wind', [{label: 'Wind ' + Units.su(), color: '--good', pts: pts.map(p => [p.t, Units.wmph(p.wind_mph)])}], {now: true, lo: 0});
   const tb = $('#pf-table'); tb.innerHTML = '';
   const day = new Intl.DateTimeFormat([], {weekday: 'short'});
   pts.filter(p => p.step_h === 3).slice(0, 10).forEach(p => {
     const d = document.createElement('div'); d.style.cssText = 'display:flex;gap:10px;padding:4px 0;border-top:1px solid var(--line);font-size:14px';
-    const cells = [day.format(new Date(p.t * 1000)) + ' ' + wxHr(p.t), p.temp + '°', p.sky || '', (p.wind_dir || '') + ' ' + (p.wind_mph ?? '') + ' mph', p.pop != null ? 'Rain ' + p.pop + '%' : ''];
+    const cells = [day.format(new Date(p.t * 1000)) + ' ' + wxHr(p.t), Units.t(p.temp) + '°', p.sky || '', (p.wind_dir || '') + ' ' + (Units.wmph(p.wind_mph) ?? '') + ' ' + Units.su(), p.pop != null ? 'Rain ' + p.pop + '%' : ''];
     cells.forEach((c, i) => { const s = document.createElement('span'); s.textContent = c; s.style.flex = i === 2 ? '1.3' : '1'; d.append(s); });
     tb.append(d);
   });
@@ -821,11 +869,11 @@ async function loadPointForecast() {
 async function loadWeatherHistory() {
   const r = await api('/api/weather/history?hours=' + $('#wh-hours').value);
   if (r.error) return;
-  const p = r.points, T = k => p.map(x => [x.t, x[k]]), gap = 3 * 3600;
-  $('#wh-tend').textContent = r.tendency ? `Pressure ${r.tendency.text} (${r.tendency.change_inhg > 0 ? '+' : ''}${r.tendency.change_inhg.toFixed(2)} inHg in 3 hours)` : '';
-  lineChart('#wh-temp', [{label: 'Temp °F', color: '--warn', pts: T('temp')}, {label: 'Dew point', color: '--accent', pts: T('dew')}], {gap});
-  lineChart('#wh-press', [{label: 'Pressure inHg', color: '--accent', pts: T('press')}], {gap, dec: 2});
-  lineChart('#wh-wind', [{label: 'Wind kt', color: '--good', pts: T('wind')}, {label: 'Gust', color: '--bad', pts: T('gust')}], {gap, lo: 0});
+  const p = r.points, T = (k, f = v => v) => p.map(x => [x.t, f(x[k])]), gap = 3 * 3600;
+  $('#wh-tend').textContent = r.tendency ? `Pressure ${r.tendency.text} (${r.tendency.change_inhg > 0 ? '+' : ''}${Units.metric ? (r.tendency.change_inhg * 33.8639).toFixed(1) : r.tendency.change_inhg.toFixed(2)} ${Units.pu()} in 3 hours)` : '';
+  lineChart('#wh-temp', [{label: 'Temp ' + Units.tu(), color: '--warn', pts: T('temp', Units.t)}, {label: 'Dew point', color: '--accent', pts: T('dew', Units.t)}], {gap});
+  lineChart('#wh-press', [{label: 'Pressure ' + Units.pu(), color: '--accent', pts: T('press', Units.p)}], {gap, dec: Units.metric ? 0 : 2});
+  lineChart('#wh-wind', [{label: 'Wind ' + Units.su(), color: '--good', pts: T('wind', Units.wkt)}, {label: 'Gust', color: '--bad', pts: T('gust', Units.wkt)}], {gap, lo: 0});
 }
 $('#wh-hours').onchange = loadWeatherHistory;
 
@@ -874,10 +922,10 @@ async function loadLocal() {
   if (r.error) { $('#loc-now').textContent = r.error; return; }
   $('#loc-title').textContent = r.place;
   const n = r.now;
-  $('#loc-now').textContent = n ? (n.temp_f != null ? n.temp_f + '°F  ' : '') + (n.wx.length ? n.wx[0] : (n.sky.length ? n.sky[n.sky.length - 1].cover : '')) : 'No recent observation';
-  $('#loc-now2').textContent = n ? 'Bridgeport airport (KBDR), ' + wxFmt(n.t) + ' · ' + n.summary + (n.pressure_inhg ? ' · ' + n.pressure_inhg.toFixed(2) + ' inHg' : '') : '';
-  if (r.forecast) body.append(locBlock(r.forecast.name + ' forecast', r.forecast.periods.slice(0, 6), r.forecast.issued));
-  if (r.marine) body.append(locBlock('Long Island Sound (west of New Haven)', (r.marine.headlines || []).map(h => [h]).concat(r.marine.periods.slice(0, 5)), r.marine.issued));
+  $('#loc-now').textContent = n ? (n.temp_f != null ? Units.t(n.temp_f) + Units.tu() + '  ' : '') + (n.wx.length ? n.wx[0] : (n.sky.length ? n.sky[n.sky.length - 1].cover : '')) : 'No recent observation';
+  $('#loc-now2').textContent = n ? 'Bridgeport airport (KBDR), ' + wxFmt(n.t) + ' · ' + Units.text(n.summary) + (n.pressure_inhg ? ' · ' + (Units.metric ? Units.p(n.pressure_inhg).toFixed(1) : n.pressure_inhg.toFixed(2)) + ' ' + Units.pu() : '') : '';
+  if (r.forecast) body.append(locBlock(r.forecast.name + ' forecast', r.forecast.periods.slice(0, 6).map(x => x.map(Units.text)), r.forecast.issued));
+  if (r.marine) body.append(locBlock('Long Island Sound (west of New Haven)', (r.marine.headlines || []).map(h => [Units.text(h)]).concat(r.marine.periods.slice(0, 5).map(x => x.map(Units.text))), r.marine.issued));
   if (r.taf) { const d = locBlock('Airport forecast (TAF) for Bridgeport', [], wxFmt(r.taf.t)); const pre = document.createElement('pre'); pre.textContent = r.taf.text; d.append(pre); body.append(d); }
   const sp = r.space;
   if (sp && (sp.alert || sp.sunspot != null)) {
@@ -1000,10 +1048,10 @@ async function loadSkywarn() {
     skLine(sp, o.statement || 'No spotter statement in the outlook.', `${o.office} (${wxFmt(o.t)})`);
     if (o.day1) { const x = skLine(sp, o.day1); x.className = 'msg'; }
   });
-  $('#sk-rep-h').textContent = `Local storm reports within ${r.radius_miles} miles`;
+  $('#sk-rep-h').textContent = `Local storm reports within ${Units.d(r.radius_miles)} ${Units.metric ? 'kilometers' : 'miles'}`;
   const rp = $('#sk-rep'); rp.innerHTML = '';
   if (!r.reports.length) skLine(rp, 'No reports in the last 48 hours.');
-  r.reports.forEach(x => skLine(rp, `${x.where}, ${x.county} ${x.state} · ${x.miles} mi · ${x.source}${x.remarks ? ' · ' + x.remarks : ''}`,
+  r.reports.forEach(x => skLine(rp, `${x.where}, ${x.county} ${x.state} · ${Units.d(x.miles)} ${Units.du()} · ${x.source}${x.remarks ? ' · ' + Units.text(x.remarks) : ''}`,
     `${wxFmt(x.t)} ${x.event}${x.mag ? ' ' + x.mag : ''}`));
   const ot = $('#sk-out'); ot.innerHTML = '';
   if (!r.outlook.length) skLine(ot, 'No outlook received yet.');
@@ -1126,11 +1174,11 @@ async function loadInsights() {
   const s = d.sst || {}, r = d.radar || {}, cl = d.clouds || {}, f = d.forecast || {}, di = d.dish || {};
   // water temperature
   let h = '<div class="card"><h2>Water temperature (from the satellite)</h2>';
-  if (s.latest) h += `<div class="grid"><div class="metric"><div class="l">Long Island Sound</div><div class="v">${s.latest.sound_f.toFixed(0)} °F</div><div class="s">${s.sound_24h ? 'last 24 h: ' + s.sound_24h.min.toFixed(0) + '–' + s.sound_24h.max.toFixed(0) + ' °F' : ''}</div></div>` +
-    Object.entries(s.latest.points || {}).map(([k, v]) => `<div class="metric"><div class="l">${k}</div><div class="v">${v.toFixed(0)} °F</div></div>`).join('') + '</div>';
+  if (s.latest) h += `<div class="grid"><div class="metric"><div class="l">Long Island Sound</div><div class="v">${Units.t(s.latest.sound_f).toFixed(Units.metric ? 1 : 0)} ${Units.tu()}</div><div class="s">${s.sound_24h ? 'last 24 h: ' + Units.t(s.sound_24h.min).toFixed(Units.metric ? 1 : 0) + '–' + Units.t(s.sound_24h.max).toFixed(Units.metric ? 1 : 0) + ' ' + Units.tu() : ''}</div></div>` +
+    Object.entries(s.latest.points || {}).map(([k, v]) => `<div class="metric"><div class="l">${k}</div><div class="v">${Units.t(v).toFixed(Units.metric ? 1 : 0)} ${Units.tu()}</div></div>`).join('') + '</div>';
   h += insImg(im.sst_stratford, 'Clear-sky surface temperature; gray is cloud. Coastal pixels mix land and water, so trust open water most. Full set in Views.');
-  h += `<p class="msg">Checked against NWS water temperatures at the Jersey shore: ${s.pairs ? s.pairs + ' comparisons over ' + s.days + ' day(s), average error ' + (s.mean_error_f > 0 ? '+' : '') + s.mean_error_f + ' °F' : 'none yet'}. ` +
-    (s.calibrated ? 'Calibration offset applied: ' + (s.offset_k > 0 ? '+' : '') + s.offset_k + ' K.' : 'Calibration starts after 8 comparisons over 3 days. Expect about ±3 °F.') + '</p></div>';
+  h += `<p class="msg">Checked against NWS water temperatures at the Jersey shore: ${s.pairs ? s.pairs + ' comparisons over ' + s.days + ' day(s), average error ' + (s.mean_error_f > 0 ? '+' : '') + Units.dt(s.mean_error_f) + ' ' + Units.tu() : 'none yet'}. ` +
+    (s.calibrated ? 'Calibration offset applied: ' + (s.offset_k > 0 ? '+' : '') + s.offset_k + ' K.' : 'Calibration starts after 8 comparisons over 3 days. Expect about ±' + (Units.metric ? '1.7 °C' : '3 °F') + '.') + '</p></div>';
   c.push(h);
   // radar
   h = '<div class="card"><h2>Radar near Stratford</h2><div class="grid">';
@@ -1153,9 +1201,9 @@ async function loadInsights() {
   // forecast
   h = '<div class="card"><h2>How good is the forecast?</h2>';
   if (f.buckets && f.buckets.length) {
-    h += (f.headline ? `<p style="margin:0 0 8px">Temperature forecasts for the next 24 hours have been off by <b>${f.headline.temp_mae_f} °F</b> on average (${f.headline.n} checks this week).</p>` : '') +
-      insT(f.buckets.map(b => [b.label, b.n, b.temp_mae, b.temp_bias, b.persistence_mae, b.wind_mae, b.sky_mae == null ? null : b.sky_mae + '%']),
-        ['Looking ahead', 'Checks', 'Temp error °F', 'Temp bias °F', '"Same as now" °F', 'Wind error mph', 'Cloud error']);
+    h += (f.headline ? `<p style="margin:0 0 8px">Temperature forecasts for the next 24 hours have been off by <b>${Units.dt(f.headline.temp_mae_f)} ${Units.tu()}</b> on average (${f.headline.n} checks this week).</p>` : '') +
+      insT(f.buckets.map(b => [b.label, b.n, Units.dt(b.temp_mae), Units.dt(b.temp_bias), Units.dt(b.persistence_mae), Units.wmph(b.wind_mae), b.sky_mae == null ? null : b.sky_mae + '%']),
+        ['Looking ahead', 'Checks', 'Temp error ' + Units.tu(), 'Temp bias ' + Units.tu(), '"Same as now" ' + Units.tu(), 'Wind error ' + Units.su(), 'Cloud error']);
     h += `<p class="msg">Each point forecast is saved when NWS Upton issues it and compared with the Bridgeport airport report at the time it was meant for. "Same as now" is the error you would get by assuming the temperature never changes. ${f.scored} checks from ${f.issued} forecasts.` +
       (f.pop && f.pop.rain_rate >= 5 ? ` Rain chances: ${f.pop.n} checks, score ${f.pop.brier} against ${f.pop.climatology_brier} for always guessing the average (lower is better).` : '') + '</p>';
   } else h += '<p class="msg">Collecting.</p>';

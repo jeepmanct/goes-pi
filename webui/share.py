@@ -315,7 +315,7 @@ button,a.b,select{cursor:pointer;min-height:40px}
 #v,#gv{width:100%;max-width:100%;min-width:0;box-sizing:border-box;text-overflow:ellipsis}
 #gif{font-size:12px;padding:3px 11px;min-height:0;line-height:1.5;border-radius:99px;color:var(--mut)}#th.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 #tabs{overflow-x:auto}#tabs button{white-space:nowrap}
-</style></head><body><main><div id="hd"><h1>GOES-19 East satellite</h1><button id="th">How it works</button></div>
+</style></head><body><main><div id="hd"><h1>GOES-19 East satellite</h1><span><button id="un" title="Switch between US and metric units"></button> <button id="th">How it works</button></span></div>
 <p>Live images from a home-built receiver. Updated every few minutes; showing the last 24 hours.<span id="lu"></span></p>
 <div id="stale" style="display:none"></div>
 <div id="tabs"><button id="tv" class="on">Views</button><button id="ti">Insights</button><button id="tw">Weather</button><button id="tg">Gallery</button><button id="tf">Forecast</button></div>
@@ -349,14 +349,23 @@ await Promise.all(F.map(f=>new Promise(r=>{const i=new Image();i.onload=i.onerro
 $('#play').disabled=false;$('#play').textContent='Pause';let i=+$('#s').value>=F.length-1?0:+$('#s').value;show(i);
 T=setInterval(()=>{i=(i+1)%F.length;show(i)},300)};
 const fmt=t=>{const d=new Date(t*1000);return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-function tab(n){const ids=['views','gal','how','fc','wx','ins'],btn=['tv','tg','th','tf','tw','ti'];
+function tab(n){curTab=n;const ids=['views','gal','how','fc','wx','ins'],btn=['tv','tg','th','tf','tw','ti'];
 ids.forEach((id,i)=>{$('#'+id).style.display=i==n?'':'none';$('#'+btn[i]).className=i==n?'on':''});
 if(n)stop();if(n!=4)stopC();if(n==3)forecast();if(n==1&&!$('#grid').children.length)gal(true);if(n==4)weather();if(n==5)insights()}
 $('#tv').onclick=()=>tab(0);$('#tg').onclick=()=>tab(1);$('#th').onclick=()=>tab(2);$('#tf').onclick=()=>tab(3);$('#tw').onclick=()=>tab(4);$('#ti').onclick=()=>tab(5);
+const U=(()=>{let m=false;try{m=localStorage.units==='metric'}catch(e){}const r=Math.round,F=x=>r((x-32)*5/9);return{
+get m(){return m},set(v){m=v;try{localStorage.units=v?'metric':'us'}catch(e){}},tu:()=>m?'°C':'°F',su:()=>m?'km/h':'mph',
+t:(f,d)=>f==null?f:m?+((f-32)*5/9).toFixed(d==null?0:d):f,dt:f=>f==null?f:m?+(f*5/9).toFixed(1):f,w:v=>v==null?v:m?r(v*1.609344):v,
+txt(s){if(!m||!s)return s;return String(s).replace(/(-?\\d+)\\s*°\\s*F\\b/g,(_,a)=>F(+a)+'°C').replace(/\\b(\\d+) to (\\d+) mph/g,(_,a,b)=>r(a*1.609344)+' to '+r(b*1.609344)+' km/h')
+.replace(/\\b(\\d+) mph/g,(_,a)=>r(a*1.609344)+' km/h').replace(/\\b(\\d+) kt\\b/g,(_,a)=>r(a*1.852)+' km/h').replace(/(dew point )(-?\\d+)°/g,(_,a,b)=>a+F(+b)+'°')
+.replace(/\\b(?:(to|into) |in |near |around )(?:the )?(?:(lower|mid|upper) )?(\\d)0s\\b/gi,(_,t,w,d)=>(t?t+' ':'')+'around '+F(+d*10+({lower:2,mid:5,upper:8}[(w||'').toLowerCase()]??5))+'°C').replace(/\\b(high|low|highs|lows)( near| around| of)? (-?\\d+)\\b(?!\\s*°)/gi,(_,a,b,c)=>a+(b||'')+' '+F(+c)+'°C').replace(/\\b(\\d+) to (\\d+) inch(?:es)?\\b/g,(_,a,b)=>(a*2.54).toFixed(0)+' to '+(b*2.54).toFixed(0)+' cm').replace(/\\b(\\d+(?:\\.\\d+)?) inch(?:es)?\\b/g,(_,a)=>(a*2.54).toFixed(0)+' cm').replace(/\\b(\\d+) ft\\b/g,(_,a)=>(a*0.3048).toFixed(1)+' m').replace(/(\\d+(?:\\.\\d+)?) inHg/g,(_,a)=>(a*33.8639).toFixed(1)+' hPa')}}})();
+let curTab=0;
+function unitBtn(){$('#un').textContent=U.m?'°C · km/h':'°F · mph'}unitBtn();
+$('#un').onclick=()=>{U.set(!U.m);unitBtn();fdone=idone=wdone=0;tab(curTab)};
 let fdone=0;
 async function forecast(){if(fdone&&Date.now()-fdone<120000)return;fdone=Date.now();
 const r=await(await fetch(B+'api/forecast')).json();const h=r.offices.map(o=>'<h2>'+esc(o.office)+'</h2><div class="iss">'+esc(o.issued)+(o.age_h>12?' &middot; '+Math.round(o.age_h)+' h old':'')+'</div>'+
-o.sections.map(s=>'<h3>'+esc(s.head)+'</h3>'+s.paras.map(p=>'<p>'+esc(p)+'</p>').join('')).join('')).join('');
+o.sections.map(s=>'<h3>'+esc(s.head)+'</h3>'+s.paras.map(p=>'<p>'+esc(U.txt(p))+'</p>').join('')).join('')).join('');
 $('#ft').innerHTML=h;$('#fm').textContent=r.offices.length?'The National Weather Service area forecast discussions, as received by the satellite broadcast. Written by forecasters for a technical audience.':'No forecast discussions have arrived yet.'}
 let idone=0;
 async function insights(){if(idone&&Date.now()-idone<120000)return;idone=Date.now();
@@ -370,10 +379,10 @@ const pic=async v=>{try{const f=(await(await fetch(B+'api/'+v)).json()).frames;r
 const [p1,p2]=await Promise.all([pic('sst_stratford'),pic('rad_stratford')]);
 const s=r.sst||{},d=r.radar||{},c=r.clouds||{},f=r.forecast||{};let h='';
 h+='<h2>Water temperature, from the satellite</h2>';
-if(s.latest)h+='<div class="g">'+tile('Long Island Sound',s.latest.sound_f.toFixed(0)+'°F',s.sound_24h?'last 24 h: '+s.sound_24h.min.toFixed(0)+'–'+s.sound_24h.max.toFixed(0)+'°F':'')+
- Object.entries(s.latest.points||{}).map(([k,v])=>tile(k,v.toFixed(0)+'°F')).join('')+'</div>';
+if(s.latest)h+='<div class="g">'+tile('Long Island Sound',U.t(s.latest.sound_f,1).toFixed(U.m?1:0)+U.tu(),s.sound_24h?'last 24 h: '+U.t(s.sound_24h.min,1).toFixed(U.m?1:0)+'–'+U.t(s.sound_24h.max,1).toFixed(U.m?1:0)+U.tu():'')+
+ Object.entries(s.latest.points||{}).map(([k,v])=>tile(k,U.t(v,1).toFixed(U.m?1:0)+U.tu())).join('')+'</div>';
 h+=p1+'<p class="iss">Estimated from two infrared channels where the sky is clear; gray is cloud. Pixels along the coast mix land and water, so open water is the most reliable. '+
- (s.pairs?'Checked against '+s.pairs+' National Weather Service water readings at the Jersey shore: average error '+(s.mean_error_f>0?'+':'')+s.mean_error_f+'°F. ':'')+'Expect about ±3°F.</p>';
+ (s.pairs?'Checked against '+s.pairs+' National Weather Service water readings at the Jersey shore: average error '+(s.mean_error_f>0?'+':'')+U.dt(s.mean_error_f)+U.tu()+'. ':'')+'Expect about ±'+(U.m?'1.7°C':'3°F')+'.</p>';
 h+='<h2>Radar near Stratford</h2>';
 const lt=d.latest;h+='<div class="g">'+tile('Right now',lt&&lt.max25!=null?Math.round(lt.max25)+' dBZ':'Dry',lt&&lt.max25!=null?'strongest echo within 25 km':'no echo within 25 km')+
  tile('Last 24 hours',d.wet_frames_24h?Math.round(d.max_dbz_24h)+' dBZ':'Dry',d.wet_frames_24h?d.wet_frames_24h+' of '+d.frames_24h+' radar frames showed rain':(d.frames_24h||0)+' radar frames, no rain')+'</div>'+p2;
@@ -383,8 +392,8 @@ if(c.scans){h+='<div class="g">'+tile('Now',c.latest.cloud+'%',ago(c.latest.t))+
  '<div class="iss">By day</div>'+bars(c.days.slice(-14).map(x=>[x.date.slice(5),x.cloud]))+'<div class="iss" style="margin-top:8px">By hour of day (Eastern)</div>'+bars(c.by_hour.map(x=>[x.hour+':00',x.cloud]))}
 else h+='<p class="iss">Still collecting.</p>';
 h+='<h2>How good is the forecast?</h2>';
-if(f.buckets&&f.buckets.length){if(f.headline)h+='<p>Temperature forecasts for the next 24 hours have been off by <b>'+f.headline.temp_mae_f+'°F</b> on average ('+f.headline.n+' checks this week).</p>';
- h+=tbl(['Looking ahead','Checks','Temp error °F','Wind error mph'],f.buckets.map(b=>[b.label,b.n,b.temp_mae,b.wind_mae]))+
+if(f.buckets&&f.buckets.length){if(f.headline)h+='<p>Temperature forecasts for the next 24 hours have been off by <b>'+U.dt(f.headline.temp_mae_f)+U.tu()+'</b> on average ('+f.headline.n+' checks this week).</p>';
+ h+=tbl(['Looking ahead','Checks','Temp error '+U.tu(),'Wind error '+U.su()],f.buckets.map(b=>[b.label,b.n,U.dt(b.temp_mae),U.w(b.wind_mae)]))+
  '<p class="iss">Each point forecast from the National Weather Service is saved when issued and compared with the Bridgeport airport report for the time it was meant for.</p>'}
 else h+='<p class="iss">Still collecting.</p>';
 $('#inst').innerHTML=h;$('#insm').textContent='Worked out from this station’s own data. Updated '+ago(r.updated)+'.'}
@@ -394,9 +403,9 @@ async function weather(){if(wdone&&Date.now()-wdone<120000){return}wdone=Date.no
 let r;try{r=await(await fetch(B+'api/weather')).json()}catch(e){$('#wxm').textContent='Weather data is not available right now.';return}
 if(r.error){$('#wxm').textContent='Weather data is not available right now.';return}
 const al=r.alerts||[];let h='<div class="al '+(al.length?'bad':'ok')+'">'+(al.length?al.length+' alert'+(al.length>1?'s':'')+' for Stratford: '+al.map(a=>esc(a.name)+(a.ends?' until '+fmt(a.ends):'')).join(' &middot; '):'No alerts in force for Fairfield County or the western Sound')+'</div>';
-const n=r.now;if(n)h+='<h2>'+esc(r.place)+'</h2><div class="big">'+(n.temp_f!=null?n.temp_f+'&deg;F ':'')+esc(n.wx.length?n.wx[0]:(n.sky.length?n.sky[n.sky.length-1].cover:''))+'</div><div class="iss">Bridgeport airport, '+fmt(n.t)+' &middot; '+esc(n.summary)+(n.pressure_inhg?' &middot; '+n.pressure_inhg.toFixed(2)+' inHg':'')+'</div>';
-if(r.forecast)h+=wblock(r.forecast.name+' forecast',r.forecast.issued,r.forecast.periods.slice(0,6));
-if(r.marine)h+=wblock('Long Island Sound (west of New Haven)',r.marine.issued,(r.marine.headlines||[]).map(x=>[x]).concat(r.marine.periods.slice(0,5)));
+const n=r.now;if(n)h+='<h2>'+esc(r.place)+'</h2><div class="big">'+(n.temp_f!=null?U.t(n.temp_f)+'&deg;'+U.tu().slice(1)+' ':'')+esc(n.wx.length?n.wx[0]:(n.sky.length?n.sky[n.sky.length-1].cover:''))+'</div><div class="iss">Bridgeport airport, '+fmt(n.t)+' &middot; '+esc(U.txt(n.summary))+(n.pressure_inhg?' &middot; '+(U.m?(n.pressure_inhg*33.8639).toFixed(1)+' hPa':n.pressure_inhg.toFixed(2)+' inHg'):'')+'</div>';
+if(r.forecast)h+=wblock(r.forecast.name+' forecast',r.forecast.issued,r.forecast.periods.slice(0,6).map(x=>x.map(U.txt)));
+if(r.marine)h+=wblock('Long Island Sound (west of New Haven)',r.marine.issued,(r.marine.headlines||[]).map(x=>[U.txt(x)]).concat(r.marine.periods.slice(0,5).map(x=>x.map(U.txt))));
 if(r.taf)h+='<h2>Airport forecast (TAF) for Bridgeport</h2><div class="iss">'+fmt(r.taf.t)+'</div><pre>'+esc(r.taf.text)+'</pre>';
 const sp=r.space;if(sp&&(sp.alert||sp.sunspot!=null)){const rows=[];if(sp.alert)rows.push([sp.alert.text+',',fmt(sp.alert.t)+(sp.alert.aurora?'. '+sp.alert.aurora:'')]);
 if(sp.sunspot!=null)rows.push(['Sunspot number',sp.sunspot+' · 10.7 cm flux '+sp.flux]);h+=wblock('Space weather','Aurora is only likely in Connecticut at a K-index of 7 or more.',rows)}
