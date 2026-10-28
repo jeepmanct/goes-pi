@@ -918,6 +918,11 @@ def _extras_loop():
         except Exception as e:
             print("space check error:", e, flush=True)
         try:
+            import winter
+            winter.check(push_only)
+        except Exception as e:
+            print("winter check error:", e, flush=True)
+        try:
             pf = _local().point_forecast()
             near = (pf or {}).get("points", [])[:8]
             if near and sum(pt["temp"] is None or pt["wind_mph"] is None for pt in near) > len(near) // 2:

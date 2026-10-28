@@ -891,7 +891,7 @@ async function loadWeather() {
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
     wxSearch(true);
   }
-  loadWxAlerts(); loadLocal(); loadTides(); loadPointForecast(); loadWeatherHistory();
+  loadWxAlerts(); loadLocal(); loadWinter(); loadTides(); loadPointForecast(); loadWeatherHistory();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
@@ -934,6 +934,23 @@ async function loadLocal() {
     if (sp.sunspot != null) rows.push(['Sunspot number', sp.sunspot + ' · 10.7 cm flux ' + sp.flux]);
     body.append(locBlock('Space weather', rows, 'Aurora is only likely in Connecticut at a K-index of 7 or more.'));
   }
+}
+async function loadWinter() {
+  const card = $('#winter-card'), r = await api('/api/winter');
+  if (!r || !r.stage || (r.stage === 'none' && !r.season)) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const lvl = {alert: 'bad', likely: 'warn', watch: 'warn', none: 'good'}[r.stage];
+  const head = $('#winter-head'); head.textContent = r.headline;
+  head.style.color = `var(--${lvl})`;
+  const body = $('#winter-body'); body.innerHTML = '';
+  const rows = [];
+  r.alerts.forEach(a => rows.push([a.name, a.ends ? 'until ' + wxFmt(a.ends) : '']));
+  const inch = v => Units.metric ? Math.round(v * 2.54) + ' cm' : v + ' in';
+  r.snow.forEach(s => rows.push(['Snow ' + new Date(s.t * 1000).toLocaleString([], {weekday: 'short', hour: 'numeric'}) + ' (12 h)', s.lo === s.hi ? inch(s.hi) : inch(s.lo) + ' to ' + inch(s.hi)]));
+  if (rows.length) body.append(locBlock('Right now', rows));
+  if (r.signals.length) body.append(locBlock('What forecasters are saying', r.signals.map(x => [x.src + (x.issued ? ' · ' + x.issued : ''), Units.text(x.text)]),
+    'From the New York office, which covers all of Connecticut’s coast, Long Island and northern New Jersey.'));
+  if (r.stage === 'none') { const m = document.createElement('div'); m.className = 'msg'; m.textContent = 'Checks the NWS alerts, the Bridgeport snow forecast and the forecasters’ discussion every 5 minutes. You get a phone push when it changes.'; body.append(m); }
 }
 async function loadTides() {
   const card = $('#tide-card'), r = await api('/api/tides');
