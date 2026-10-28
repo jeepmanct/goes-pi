@@ -54,6 +54,7 @@ sysstats = _load("sysstats")
 products = _load("products")
 sys.modules["goes_products"] = products        # one shared product index for the panel, local.py and watch.py
 local = _load("local")
+tides = _load("tides")
 sys.modules["goes_local"] = local
 skywarn = _load("skywarn")
 sys.modules["goes_skywarn"] = skywarn
@@ -933,6 +934,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(json.loads((HOME / "goes" / "insights.json").read_text()))
                 except (OSError, ValueError):
                     return self.send_json({})
+            if u.path == "/api/tides":
+                return self.send_json(tides.tides())
             if u.path == "/api/local":
                 return self.send_json(local.summary())
             if u.path == "/api/mail":

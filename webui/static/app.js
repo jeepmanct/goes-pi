@@ -891,7 +891,7 @@ async function loadWeather() {
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
     wxSearch(true);
   }
-  loadWxAlerts(); loadLocal(); loadPointForecast(); loadWeatherHistory();
+  loadWxAlerts(); loadLocal(); loadTides(); loadPointForecast(); loadWeatherHistory();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
@@ -934,6 +934,44 @@ async function loadLocal() {
     if (sp.sunspot != null) rows.push(['Sunspot number', sp.sunspot + ' · 10.7 cm flux ' + sp.flux]);
     body.append(locBlock('Space weather', rows, 'Aurora is only likely in Connecticut at a K-index of 7 or more.'));
   }
+}
+async function loadTides() {
+  const card = $('#tide-card'), r = await api('/api/tides');
+  if (!r || r.error || !r.predicted) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const ft = v => Units.metric ? (v * 0.3048).toFixed(2) + ' m' : v.toFixed(1) + ' ft';
+  const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  const day = t => new Date(t * 1000).toLocaleDateString([], {weekday: 'short'});
+  const nowS = Date.now() / 1000, next = r.hilo.find(h => h.t > nowS), prev = r.hilo.filter(h => h.t <= nowS).pop();
+  const lv = r.level && r.level.ft != null ? r.level.ft : null;
+  const dir = next ? (next.type === 'H' ? 'Rising' : 'Falling') : '';
+  $('#tide-now').textContent = (lv != null ? ft(lv) + ' above low-water datum' : 'Tide') + (dir ? ' · ' + dir : '');
+  const bits = [];
+  if (next) bits.push('Next ' + (next.type === 'H' ? 'high' : 'low') + ' ' + clock(next.t) + ' (' + ft(next.v) + ')');
+  if (r.water_temp_f != null) bits.push('water ' + Units.t(r.water_temp_f) + Units.tu());
+  if (r.wind) bits.push('wind ' + r.wind.dir + ' ' + Units.wmph(Math.round(r.wind.mph)) + (r.wind.gust_mph ? ' gust ' + Units.wmph(Math.round(r.wind.gust_mph)) : '') + ' ' + Units.su());
+  $('#tide-now2').textContent = 'Bridgeport harbor · ' + bits.join(' · ') + (r.stale ? ' · (data may be out of date)' : '');
+  // chart: observed vs predicted, -12 h to +36 h
+  const t0 = nowS - 12 * 3600, t1 = nowS + 36 * 3600, W = 600, H = 150, L = 34, B = 18;
+  const pts = r.predicted.filter(p => p[0] >= t0 && p[0] <= t1 && p[1] != null);
+  const lo = Math.min(...pts.map(p => p[1]), -1), hi = Math.max(...pts.map(p => p[1]), 9);
+  const X = t => L + (t - t0) / (t1 - t0) * (W - L - 4), Y = v => 6 + (hi - v) / (hi - lo) * (H - B - 6);
+  const path = a => a.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join('');
+  const obs = r.observed.filter(p => p[0] >= t0);
+  const ticks = [];
+  for (let d = Math.ceil(t0 / 21600) * 21600; d < t1; d += 21600) { const h = new Date(d * 1000).getHours(); if (h % 6 === 0) ticks.push(d); }
+  const cs = getComputedStyle(document.documentElement), fg = cs.getPropertyValue('--muted').trim() || '#888', ac = cs.getPropertyValue('--accent').trim() || '#2a7ae2';
+  $('#tide-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin-top:8px" role="img" aria-label="Tide height forecast">
+    <line x1="${L}" x2="${W - 4}" y1="${Y(0)}" y2="${Y(0)}" stroke="${fg}" stroke-opacity=".3" stroke-dasharray="3 3"/>
+    <text x="${L - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="${fg}">0</text>
+    <text x="${L - 4}" y="${Y(Math.round(hi - 1)) + 4}" font-size="10" text-anchor="end" fill="${fg}">${Units.metric ? (Math.round(hi - 1) * .3048).toFixed(1) : Math.round(hi - 1)}</text>
+    ${ticks.map(d => `<text x="${X(d)}" y="${H - 4}" font-size="10" text-anchor="middle" fill="${fg}">${new Date(d * 1000).getHours() === 0 ? day(d) : clock(d).replace(':00', '')}</text>`).join('')}
+    <path d="${path(pts)}" fill="none" stroke="${ac}" stroke-width="2"/>
+    <path d="${path(obs)}" fill="none" stroke="${fg}" stroke-width="1.5" stroke-opacity=".8"/>
+    <line x1="${X(nowS)}" x2="${X(nowS)}" y1="4" y2="${H - B}" stroke="${fg}" stroke-opacity=".5"/>
+  </svg><div class="msg">Blue: predicted tide. Grey: measured so far. Line: now.</div>`;
+  const h = $('#tide-hilo'); h.innerHTML = '';
+  h.append(locBlock('High and low tides', r.hilo.filter(x => x.t > nowS - 1800).slice(0, 8).map(x => [(x.type === 'H' ? 'High ' : 'Low ') + day(x.t) + ' ' + clock(x.t), ft(x.v)])));
 }
 async function wxSearch(reset) {
   if (reset) { wxOffset = 0; $('#wx-list').innerHTML = ''; }
