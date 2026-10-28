@@ -15,7 +15,6 @@ RANK = {"none": 0, "watch": 1, "likely": 2, "alert": 3}
 STRONG = re.compile(r"nor'?easter|coastal (?:storm|low)|winter storm|blizzard|snow ?storm|heavy snow|significant snow|"
                     r"accumulating snow|major snow|snow accumulation|ice storm|wintry mix|freezing rain", re.I)
 NEGATION = re.compile(r"\b(no|not|unlikely|without|rule[sd]? out|low (?:chance|probability))\b", re.I)
-SEASON = (10, 4)       # October through April
 
 
 def _mods():
@@ -23,8 +22,9 @@ def _mods():
 
 
 def in_season(now=None):
-    m = time.localtime(now or time.time()).tm_mon
-    return m >= SEASON[0] or m <= SEASON[1]
+    """Visible from Nov 2 through Mar 31; hidden Apr 1 through Nov 1."""
+    t = time.localtime(now or time.time())
+    return (t.tm_mon, t.tm_mday) > (11, 1) or t.tm_mon < 4
 
 
 def _sentences(text):
@@ -133,7 +133,7 @@ def _load_state():
 def check(push, now=None):
     """Called every few minutes: pushes once per escalation (watch -> likely -> alert) and once per new alert."""
     ev = evaluate(now)
-    if not ev["season"]:
+    if not ev["season"] and ev["stage"] != "alert":     # off-season: only a real NWS alert still pushes
         return ev
     st, now = _load_state(), now or time.time()
     rank = RANK[ev["stage"]]

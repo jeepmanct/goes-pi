@@ -937,7 +937,7 @@ async function loadLocal() {
 }
 async function loadWinter() {
   const card = $('#winter-card'), r = await api('/api/winter');
-  if (!r || !r.stage || (r.stage === 'none' && !r.season)) { card.style.display = 'none'; return; }
+  if (!r || !r.stage || (!r.season && r.stage !== 'alert')) { card.style.display = 'none'; return; }
   card.style.display = '';
   const lvl = {alert: 'bad', likely: 'warn', watch: 'warn', none: 'good'}[r.stage];
   const head = $('#winter-head'); head.textContent = r.headline;

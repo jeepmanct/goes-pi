@@ -25,4 +25,8 @@ push = lambda *a, **k: sent.append(a[0])
 winter.in_season = lambda n=None: True
 winter.check(push, now); winter.check(push, now)
 assert sent == ["Winter alert for Stratford"], sent
+import datetime as dt
+winter = importlib.reload(winter)
+day = lambda m, d: dt.datetime(2027, m, d, 12).timestamp()
+assert [winter.in_season(day(*x)) for x in ((3, 31), (4, 1), (7, 4), (11, 1), (11, 2), (12, 25), (1, 15))] == [True, False, False, False, True, True, True]
 print("ok")
