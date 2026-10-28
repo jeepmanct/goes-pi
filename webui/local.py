@@ -295,7 +295,7 @@ def _row_tokens(lines, label, n):
     for ln in lines:
         if ln.startswith(label):
             toks = ln[len(label):].split()
-            return toks[:n] if len(toks) >= n else None
+            return (toks + [""] * n)[:n] if toks else None
     return None
 
 
@@ -353,9 +353,9 @@ def point_forecast(zone=None, rows=None, keep_past=False):
                     tv = None
                 points.append({"t": t0 + i * step, "temp": tv,
                                "dew": int(dew[i]) if dew and dew[i].lstrip("-").isdigit() else None,
-                               "wind_dir": wd[i] if wd else None,
+                               "wind_dir": wd[i] or None if wd else None,
                                "wind_mph": int(ws[i]) if ws and ws[i].isdigit() else None,
-                               "sky": SKY_PFM.get(sky[i], sky[i]) if sky else None,
+                               "sky": SKY_PFM.get(sky[i], sky[i]) or None if sky else None,
                                "pop": int(pops[i]) if i in pops and pops[i].isdigit() else None, "step_h": step // 3600})
         if points:
             if not keep_past:

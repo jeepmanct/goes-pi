@@ -918,6 +918,16 @@ def _extras_loop():
         except Exception as e:
             print("space check error:", e, flush=True)
         try:
+            pf = _local().point_forecast()
+            near = (pf or {}).get("points", [])[:8]
+            if near and sum(pt["temp"] is None or pt["wind_mph"] is None for pt in near) > len(near) // 2:
+                push_only("GOES: forecast not parsing",
+                          "The Bridgeport point forecast came back with missing temps or winds, so the PFM bulletin "
+                          "layout probably changed. Check parsing in local.point_forecast.",
+                          key="pfm-parse", every=24 * 3600, priority="default", tags="warning")
+        except Exception as e:
+            print("forecast check error:", e, flush=True)
+        try:
             v = _undervoltage()
             if v is not None and v & 0x10001:
                 push_only("GOES: Pi power problem",
