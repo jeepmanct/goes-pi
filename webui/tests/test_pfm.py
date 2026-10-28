@@ -13,4 +13,6 @@ p3 = [p for p in pf["points"] if p["step_h"] == 3]
 assert len(p3) == 22, len(p3)
 assert p3[0]["temp"] == 43 and p3[0]["wind_mph"] == 6 and p3[0]["wind_dir"] == "NE", p3[0]
 assert p3[20]["temp"] == 55 and p3[20]["wind_mph"] == 10, p3[20]
+p6 = [p for p in pf["points"] if p["step_h"] == 6]
+assert [p["wind_dir"] for p in p6[:4]] == [None, "NW", None, "NW"], [p["wind_dir"] for p in p6[:4]]
 print("ok")

@@ -310,6 +310,13 @@ def _slots(line, label, n, first=13, width=3):
     return out
 
 
+def _slots_by_header(line, hdr, n):
+    """{slot: token} for a sparse row, matching each token's right edge to the hour columns in hdr."""
+    off = hdr.index("hrly")
+    ends = [off + m.end() for m in re.finditer(r"\d\d", hdr[off:])][-n:]
+    return {ends.index(m.end()): m.group(0) for m in re.finditer(r"\S+", line) if m.end() in ends}
+
+
 def point_forecast(zone=None, rows=None, keep_past=False):
     """3-hourly (then 6-hourly) forecast for the home point from the PFM bulletin: list of dicts with t, temp, dew,
     wind_dir, wind_mph, sky, pop, plus the point's name and issue time. None if no bulletin."""
@@ -342,7 +349,9 @@ def point_forecast(zone=None, rows=None, keep_past=False):
             step = 3 * 3600 if sect == "3hrly" else 6 * 3600
             block = lines[idx:]
             temp, dew = _row_tokens(block, "Temp", n), _row_tokens(block, "Dewpt", n)
-            wd, ws = _row_tokens(block, "Wind dir", n) or _row_tokens(block, "PWind dir", n), _row_tokens(block, "Wind spd", n)
+            wd, ws = _row_tokens(block, "Wind dir", n), _row_tokens(block, "Wind spd", n)
+            pw_line = next((ln for ln in block if ln.startswith("PWind dir")), "")
+            pwd = {} if wd else _slots_by_header(pw_line, lines[idx], n)
             sky = _row_tokens(block, "Clouds", n) or _row_tokens(block, "Avg clouds", n)
             pop_line = next((ln for ln in block if ln.startswith("PoP 12hr")), "")
             pops = _slots(pop_line, "PoP 12hr", n)
@@ -353,7 +362,7 @@ def point_forecast(zone=None, rows=None, keep_past=False):
                     tv = None
                 points.append({"t": t0 + i * step, "temp": tv,
                                "dew": int(dew[i]) if dew and dew[i].lstrip("-").isdigit() else None,
-                               "wind_dir": wd[i] or None if wd else None,
+                               "wind_dir": (wd[i] or None) if wd else pwd.get(i),
                                "wind_mph": int(ws[i]) if ws and ws[i].isdigit() else None,
                                "sky": SKY_PFM.get(sky[i], sky[i]) or None if sky else None,
                                "pop": int(pops[i]) if i in pops and pops[i].isdigit() else None, "step_h": step // 3600})
