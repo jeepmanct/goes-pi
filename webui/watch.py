@@ -779,6 +779,18 @@ def _monthly_loop():
 BESTIMG_SENT = GOES_DIR / ".bestimage-sent"
 
 
+def _mod(name):
+    """A sibling module (winter, tides, tropical) shared with app.py, loaded by path since the panel isn't on sys.path."""
+    m = sys.modules.get("goes_" + name)
+    if m is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("goes_" + name, Path(__file__).resolve().parent / (name + ".py"))
+        m = importlib.util.module_from_spec(spec)
+        sys.modules["goes_" + name] = m
+        spec.loader.exec_module(m)
+    return m
+
+
 def _local():
     m = sys.modules.get("goes_local")
     if m is None:
@@ -918,7 +930,18 @@ def _extras_loop():
         except Exception as e:
             print("space check error:", e, flush=True)
         try:
-            import winter
+            tropical = _mod('tropical')
+            if tropical.in_season():
+                tropical.check(push_only)
+        except Exception as e:
+            print("tropical check error:", e, flush=True)
+        try:
+            tides = _mod('tides')
+            tides.check(push_only)
+        except Exception as e:
+            print("tide check error:", e, flush=True)
+        try:
+            winter = _mod('winter')
             winter.check(push_only)
         except Exception as e:
             print("winter check error:", e, flush=True)

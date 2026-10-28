@@ -889,9 +889,9 @@ async function loadWeather() {
     s.offices.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; $('#wx-office').append(o); });
     wxReady = true;
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
-    wxSearch(true);
+    wxSearch(true, 5);
   }
-  loadWxAlerts(); loadLocal(); loadWinter(); loadTides(); loadPointForecast(); loadWeatherHistory();
+  loadWxAlerts(); loadLocal(); loadWinter(); loadTropical(); loadTides(); loadPointForecast(); loadWeatherHistory();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
@@ -935,6 +935,18 @@ async function loadLocal() {
     body.append(locBlock('Space weather', rows, 'Aurora is only likely in Connecticut at a K-index of 7 or more.'));
   }
 }
+async function loadTropical() {
+  const card = $('#trop-card'), r = await api('/api/tropical');
+  if (!r || !r.headline || (!r.season && !r.storms.length)) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const head = $('#trop-head'); head.textContent = r.headline;
+  head.style.color = `var(--${r.storms.length ? 'bad' : (r.outlook && r.outlook.areas.length ? 'warn' : 'good')})`;
+  const body = $('#trop-body'); body.innerHTML = '';
+  r.storms.forEach(s => body.append(locBlock(s.title + ' · advisory ' + s.number, Object.entries(s.keys).map(([k, v]) => [k, Units.text(v)]), wxFmt(s.t))));
+  ((r.outlook || {}).areas || []).forEach(a => body.append(locBlock('Area to watch', [[a.text, '']].concat(
+    a.two_day != null ? [['Chance in 2 days', a.two_day + '%']] : [], a.seven_day != null ? [['Chance in 7 days', a.seven_day + '%']] : []))));
+  if (r.outlook) { const m = document.createElement('div'); m.className = 'msg'; m.textContent = 'National Hurricane Center outlook issued ' + r.outlook.issued + '. Season: June 1 to November 30; this card hides itself outside it unless a storm is active.'; body.append(m); }
+}
 async function loadWinter() {
   const card = $('#winter-card'), r = await api('/api/winter');
   if (!r || !r.stage || (!r.season && r.stage !== 'alert')) { card.style.display = 'none'; return; }
@@ -965,13 +977,14 @@ async function loadTides() {
   $('#tide-now').textContent = (lv != null ? ft(lv) + ' above low-water datum' : 'Tide') + (dir ? ' · ' + dir : '');
   const bits = [];
   if (next) bits.push('Next ' + (next.type === 'H' ? 'high' : 'low') + ' ' + clock(next.t) + ' (' + ft(next.v) + ')');
+  if (r.surge_ft != null) bits.push((r.surge_ft >= 0 ? '+' : '−') + ft(Math.abs(r.surge_ft)) + ' vs. predicted');
   if (r.water_temp_f != null) bits.push('water ' + Units.t(r.water_temp_f) + Units.tu());
   if (r.wind) bits.push('wind ' + r.wind.dir + ' ' + Units.wmph(Math.round(r.wind.mph)) + (r.wind.gust_mph ? ' gust ' + Units.wmph(Math.round(r.wind.gust_mph)) : '') + ' ' + Units.su());
   $('#tide-now2').textContent = 'Bridgeport harbor · ' + bits.join(' · ') + (r.stale ? ' · (data may be out of date)' : '');
   // chart: observed vs predicted, -12 h to +36 h
   const t0 = nowS - 12 * 3600, t1 = nowS + 36 * 3600, W = 600, H = 150, L = 34, B = 18;
   const pts = r.predicted.filter(p => p[0] >= t0 && p[0] <= t1 && p[1] != null);
-  const lo = Math.min(...pts.map(p => p[1]), -1), hi = Math.max(...pts.map(p => p[1]), 9);
+  const wl = r.flood && r.flood.watch, lo = Math.min(...pts.map(p => p[1]), -1), hi = Math.max(...pts.map(p => p[1]), 9, wl ? wl + 0.7 : 0);
   const X = t => L + (t - t0) / (t1 - t0) * (W - L - 4), Y = v => 6 + (hi - v) / (hi - lo) * (H - B - 6);
   const path = a => a.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join('');
   const obs = r.observed.filter(p => p[0] >= t0);
@@ -983,17 +996,23 @@ async function loadTides() {
     <text x="${L - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="${fg}">0</text>
     <text x="${L - 4}" y="${Y(Math.round(hi - 1)) + 4}" font-size="10" text-anchor="end" fill="${fg}">${Units.metric ? (Math.round(hi - 1) * .3048).toFixed(1) : Math.round(hi - 1)}</text>
     ${ticks.map(d => `<text x="${X(d)}" y="${H - 4}" font-size="10" text-anchor="middle" fill="${fg}">${new Date(d * 1000).getHours() === 0 ? day(d) : clock(d).replace(':00', '')}</text>`).join('')}
+    ${wl ? `<line x1="${L}" x2="${W - 4}" y1="${Y(wl)}" y2="${Y(wl)}" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="5 3"/><text x="${W - 6}" y="${Y(wl) - 3}" font-size="10" text-anchor="end" fill="var(--warn)">flood statements start here</text>` : ''}
     <path d="${path(pts)}" fill="none" stroke="${ac}" stroke-width="2"/>
     <path d="${path(obs)}" fill="none" stroke="${fg}" stroke-width="1.5" stroke-opacity=".8"/>
     <line x1="${X(nowS)}" x2="${X(nowS)}" y1="4" y2="${H - B}" stroke="${fg}" stroke-opacity=".5"/>
-  </svg><div class="msg">Blue: predicted tide. Grey: measured so far. Line: now.</div>`;
+  </svg><div class="msg">Blue: predicted tide. Grey: measured so far. Dashed: where the NWS began issuing coastal flood statements at Bridgeport (8.5 ft).</div>`;
   const h = $('#tide-hilo'); h.innerHTML = '';
-  h.append(locBlock('High and low tides', r.hilo.filter(x => x.t > nowS - 1800).slice(0, 8).map(x => [(x.type === 'H' ? 'High ' : 'Low ') + day(x.t) + ' ' + clock(x.t), ft(x.v)])));
+  const est = Object.fromEntries((r.highs || []).map(x => [x.t, x]));
+  h.append(locBlock('High and low tides', r.hilo.filter(x => x.t > nowS - 1800).slice(0, 8).map(x => {
+    const e = est[x.t], extra = e && e.category ? ' → about ' + ft(e.estimated) + ', flooding possible (' + e.category + ')' : e && Math.abs(e.estimated - x.v) >= 0.3 ? ' → about ' + ft(e.estimated) : '';
+    return [(x.type === 'H' ? 'High ' : 'Low ') + day(x.t) + ' ' + clock(x.t), ft(x.v) + extra];
+  }), 'The “about” figure adds the water’s current offset from the prediction (storm surge), fading over a day. It is an estimate.'));
 }
-async function wxSearch(reset) {
+async function wxSearch(reset, first = 40) {
   if (reset) { wxOffset = 0; $('#wx-list').innerHTML = ''; }
+  const size = reset ? first : 10;      // forecast discussions open with 5; Load more adds 10
   const p = new URLSearchParams({cat: $('#wx-cat').value, office: $('#wx-office').value, q: $('#wx-q').value,
-    hours: $('#wx-hours').value, limit: 40, offset: wxOffset, warnings: wxWarnOnly ? 1 : 0});
+    hours: $('#wx-hours').value, limit: size, offset: wxOffset, warnings: wxWarnOnly ? 1 : 0});
   $('#wx-msg').textContent = 'Searching…';
   const r = await api('/api/products?' + p);
   if (r.error) { $('#wx-msg').textContent = r.error; return; }
@@ -1022,7 +1041,7 @@ $('#wx-more').onclick = () => wxSearch(false);
 $('#wx-q').onkeydown = e => { if (e.key === 'Enter') { wxWarnOnly = false; wxSearch(true); } };
 $('#wx-mine').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = ''; $('#wx-office').value = wxMine[0] || ''; $('#wx-q').value = ''; wxSearch(true); };
 $('#wx-warn').onclick = () => { wxWarnOnly = true; $('#wx-cat').value = ''; $('#wx-office').value = ''; wxSearch(true); };
-$('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true); };
+$('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true, 5); };
 
 // ---- sky: sun, moon and where the dish points (Stratford, CT)
 const SKY = {lat: 41.18, lon: -73.13, satLon: -75.0, tz: 'America/New_York'};   // Stratford, CT
@@ -1259,6 +1278,14 @@ async function loadInsights() {
     h += (f.headline ? `<p style="margin:0 0 8px">Temperature forecasts for the next 24 hours have been off by <b>${Units.dt(f.headline.temp_mae_f)} ${Units.tu()}</b> on average (${f.headline.n} checks this week).</p>` : '') +
       insT(f.buckets.map(b => [b.label, b.n, Units.dt(b.temp_mae), Units.dt(b.temp_bias), Units.dt(b.persistence_mae), Units.wmph(b.wind_mae), b.sky_mae == null ? null : b.sky_mae + '%']),
         ['Looking ahead', 'Checks', 'Temp error ' + Units.tu(), 'Temp bias ' + Units.tu(), '"Same as now" ' + Units.tu(), 'Wind error ' + Units.su(), 'Cloud error']);
+    const bs = f.buckets.filter(b => b.temp_mae != null), mx = Math.max(...bs.map(b => Math.max(b.temp_mae, b.persistence_mae || 0)), 1), bw = 560 / Math.max(bs.length, 1);
+    h += `<svg viewBox="0 0 600 150" style="width:100%;height:auto;margin-top:10px" role="img" aria-label="Forecast error by lead time">` + bs.map((b, i) => {
+      const x = 20 + i * bw, hh = v => 100 * v / mx;
+      return `<rect x="${x + bw * .12}" y="${110 - hh(b.temp_mae)}" width="${bw * .34}" height="${hh(b.temp_mae)}" fill="var(--accent)"/>` +
+        (b.persistence_mae != null ? `<rect x="${x + bw * .5}" y="${110 - hh(b.persistence_mae)}" width="${bw * .34}" height="${hh(b.persistence_mae)}" fill="var(--muted)" fill-opacity=".6"/>` : '') +
+        `<text x="${x + bw * .3}" y="${106 - hh(b.temp_mae)}" font-size="10" text-anchor="middle" fill="var(--text)">${Units.dt(b.temp_mae)}</text>` +
+        `<text x="${x + bw / 2}" y="128" font-size="11" text-anchor="middle" fill="var(--muted)">${b.label}</text>`;
+    }).join('') + `</svg><div class="msg">Blue: NWS forecast error. Grey: error if you assumed the temperature never changes. Shorter bars are better.</div>`;
     h += `<p class="msg">Each point forecast is saved when NWS Upton issues it and compared with the Bridgeport airport report at the time it was meant for. "Same as now" is the error you would get by assuming the temperature never changes. ${f.scored} checks from ${f.issued} forecasts.` +
       (f.pop && f.pop.rain_rate >= 5 ? ` Rain chances: ${f.pop.n} checks, score ${f.pop.brier} against ${f.pop.climatology_brier} for always guessing the average (lower is better).` : '') + '</p>';
   } else h += '<p class="msg">Collecting.</p>';

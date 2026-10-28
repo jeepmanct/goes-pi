@@ -56,6 +56,9 @@ sys.modules["goes_products"] = products        # one shared product index for th
 local = _load("local")
 tides = _load("tides")
 winter = _load("winter")
+tropical = _load("tropical")
+for _n, _m in (("tides", tides), ("winter", winter), ("tropical", tropical)):
+    sys.modules["goes_" + _n] = _m        # watch.py's background checks share these instances
 sys.modules["goes_local"] = local
 skywarn = _load("skywarn")
 sys.modules["goes_skywarn"] = skywarn
@@ -935,6 +938,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(json.loads((HOME / "goes" / "insights.json").read_text()))
                 except (OSError, ValueError):
                     return self.send_json({})
+            if u.path == "/api/tropical":
+                return self.send_json(tropical.evaluate())
             if u.path == "/api/winter":
                 ev = winter.evaluate()
                 return self.send_json({**ev, "headline": winter.headline(ev)})
