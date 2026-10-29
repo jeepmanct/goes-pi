@@ -212,6 +212,7 @@ function render() {
     $('#ms-vit').textContent = best.vit == null ? 'lower = better' : `best this run: ${f(best.vit)}`;
     $('#ms-ok').textContent = `best this run: ${f(best.ok)}`;
     tone(last);
+    clicks(last);
   } else tone(null);
   chart('#c-vit', [{d: hist.map(h => h.vit), c: 'var(--warn)'}]);
   chart('#c-pkt', [{d: hist.map(h => h.ok), c: 'var(--good)'}, {d: hist.map(h => h.drops), c: 'var(--bad)'}]);
@@ -246,17 +247,54 @@ function chart(sel, series, zero) {
 
 // ---- audio aiming aid: pitch rises as packets decode and viterbi errors fall
 let actx, osc, gainNode, soundOn = false;
+function audioCtx() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  actx.resume();
+  return actx;
+}
 $('#sound').onclick = () => {
   soundOn = !soundOn;
   $('#sound').textContent = soundOn ? '🔊 Sound on' : '🔇 Sound off';
-  if (soundOn && !actx) {
-    actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (soundOn && !osc) {
+    audioCtx();
     osc = actx.createOscillator(); gainNode = actx.createGain(); gainNode.gain.value = 0;
     osc.connect(gainNode).connect(actx.destination); osc.start();
   }
   if (actx) actx.resume();
   if (!soundOn && gainNode) gainNode.gain.value = 0;
 };
+// Geiger clicks: one tick per decoded packet, spread randomly over the second; drops are lower thumps
+let clicksOn = false, clickBuf = null, lastClickT = 0;
+function showClicks() { $('#clicks').textContent = clicksOn ? '☢ Clicks on' : '☢ Clicks off'; }
+showClicks();
+$('#clicks').onclick = () => {
+  clicksOn = !clicksOn;
+  showClicks();
+  if (clicksOn) audioCtx();
+};
+function clickBuffer() {
+  if (clickBuf) return clickBuf;
+  const n = Math.floor(actx.sampleRate * 0.004);
+  clickBuf = actx.createBuffer(1, n, actx.sampleRate);
+  const d = clickBuf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (n / 5));
+  return clickBuf;
+}
+function clicks(p) {
+  if (!clicksOn || !actx || !p || p.t <= lastClickT) return;
+  lastClickT = p.t;
+  const buf = clickBuffer(), t0 = actx.currentTime + 0.05;
+  const burst = (n, rate, vol) => {
+    for (let i = 0; i < Math.min(Math.round(n), 150); i++) {
+      const src = actx.createBufferSource(), g = actx.createGain();
+      src.buffer = buf; src.playbackRate.value = rate; g.gain.value = vol;
+      src.connect(g).connect(actx.destination);
+      src.start(t0 + Math.random());
+    }
+  };
+  burst(p.ok || 0, 1, 0.5);
+  burst(p.drops || 0, 0.25, 0.9);
+}
 function tone(p) {
   if (!soundOn || !osc) return;
   if (!p) { gainNode.gain.value = 0; return; }
