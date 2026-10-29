@@ -490,7 +490,7 @@ async function loadOutages() {
   });
 }
 async function loadSignal() {
-  loadOutages();
+  loadOutages(); loadSweep();
   const d = await api('/api/history?hours=' + $('#sig-range').value);
   hchart('#h-vit', d.points, 'vit', '--warn'); hchart('#h-ok', d.points, 'ok', '--good', 0); hchart('#h-gain', d.points, 'gain', '--accent');
   const st = d.state || {};
@@ -508,6 +508,38 @@ async function loadSignal() {
   $('#alert-msg').textContent = bits.join(' · ');
 }
 $('#sig-range').onchange = loadSignal;
+let sweepTimer = null;
+async function loadSweep() {
+  const r = await api('/api/gainsweep'), running = r.state === 'running';
+  $('#sweep-go').style.display = running ? 'none' : ''; $('#sweep-stop').style.display = running ? '' : 'none';
+  const out = $('#sweep-out'); out.textContent = '';
+  const mm = s => Math.max(0, Math.ceil(s / 60));
+  if (running) {
+    const left = (r.plan.length - r.step - 1) * (r.settle + r.dwell) + Math.max(0, r.phase_end - Date.now() / 1000);
+    $('#sweep-msg').textContent = `Step ${r.step + 1} of ${r.plan.length}: gain ${r.gain}, ${r.phase === 'settling' ? 'settling' : 'measuring'}. About ${mm(left)} min left.`;
+  } else $('#sweep-msg').textContent = r.state === 'idle' ? '' : (r.message || '');
+  if (r.results && r.results.length) {
+    const t = document.createElement('table'); t.style.cssText = 'width:100%;border-collapse:collapse;font-size:14px;margin-top:10px';
+    t.innerHTML = '<tr><th>Gain</th><th>Viterbi errors</th><th>Packets/s</th><th>Locked</th><th>RS errors</th></tr>' +
+      r.results.map(x => `<tr><td>${x.gain}</td><td>${x.vit ?? 'no lock'}</td><td>${x.ok}</td><td>${Math.round(x.locked * 100)}%</td><td>${x.rs}</td></tr>`).join('');
+    out.append(t);
+  }
+  if (r.recommend) {
+    const p = document.createElement('p'); p.className = 'msg'; p.textContent = r.recommend.text; out.append(p);
+    if (r.recommend.gain != null && r.state === 'done' && r.recommend.gain !== r.original) {
+      const b = document.createElement('button'); b.className = 'b go'; b.textContent = `Apply gain ${r.recommend.gain}`;
+      b.onclick = async () => { b.disabled = true; const a = await api('/api/gainsweep/apply', {gain: r.recommend.gain}); $('#sweep-msg').textContent = a.result || a.error; };
+      out.append(b);
+    }
+  }
+  clearTimeout(sweepTimer);
+  if (running) sweepTimer = setTimeout(() => { if ($('#signal').offsetParent !== null) loadSweep(); }, 5000);
+}
+$('#sweep-go').onclick = async () => {
+  if (!confirm('Run the gain sweep? It takes about 20 minutes, and goesrecv restarts at each step.')) return;
+  const a = await api('/api/gainsweep/start', {}); $('#sweep-msg').textContent = a.result || a.error; loadSweep();
+};
+$('#sweep-stop').onclick = async () => { const a = await api('/api/gainsweep/abort', {}); $('#sweep-msg').textContent = a.result || a.error; loadSweep(); };
 async function alertTest(kind, btn) {
   btn.disabled = true; $('#alert-msg').textContent = 'Working…';
   const r = await api('/api/alerts/test', {kind});
@@ -935,7 +967,7 @@ async function loadWeather() {
     $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || '';
     wxSearch(true, 5);
   }
-  loadWxAlerts(); loadLocal(); loadWinter(); loadTropical(); loadTides(); loadPointForecast(); loadWeatherHistory();
+  loadWxAlerts(); loadLocal(); loadWinter(); loadTropical(); loadTides(); loadSunset(); loadPointForecast(); loadWeatherHistory();
 }
 async function loadWxAlerts() {
   const r = await api('/api/alerts/active');
@@ -1007,6 +1039,14 @@ async function loadWinter() {
   if (r.signals.length) body.append(locBlock('What forecasters are saying', r.signals.map(x => [x.src + (x.issued ? ' · ' + x.issued : ''), Units.text(x.text)]),
     'From the New York office, which covers all of Connecticut’s coast, Long Island and northern New Jersey.'));
   if (r.stage === 'none') { const m = document.createElement('div'); m.className = 'msg'; m.textContent = 'Checks the NWS alerts, the Bridgeport snow forecast and the forecasters’ discussion every 5 minutes. You get a phone push when it changes.'; body.append(m); }
+}
+async function loadSunset() {
+  const card = $('#sunset-card'), r = await api('/api/sunset');
+  if (!r || r.error || r.score == null || r.minutes_to > 360) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const clk = t => new Date(t * 1000).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+  $('#sunset-now').textContent = `${r.label} · ${r.score}/100`;
+  $('#sunset-why').textContent = `Sunset ${clk(r.sunset)}, best light ${clk(r.best_from)} to ${clk(r.best_to)}. ` + r.why.charAt(0).toUpperCase() + r.why.slice(1) + '.';
 }
 async function loadTides() {
   const card = $('#tide-card'), r = await api('/api/tides');

@@ -68,6 +68,12 @@
   <div class="card"><h2>Viterbi errors (lower is better)</h2><canvas id="h-vit"></canvas></div>
   <div class="card"><h2>Packets per second</h2><canvas id="h-ok"></canvas></div>
   <div class="card"><h2>Gain</h2><canvas id="h-gain"></canvas></div>
+  <div class="card" id="sweep-card">
+    <h2>Gain sweep</h2>
+    <p class="msg" style="margin-top:0">Tries tuner gains 50, 44, 40, 36 and 30, then 50 again to check for drift, about 20 minutes in all. Each step restarts goesrecv, so there are short gaps in the images. Your current gain is put back when it finishes, and you choose whether to apply the result.</p>
+    <div class="row"><button class="b go" id="sweep-go">Start sweep</button><button class="b ghost" id="sweep-stop" style="display:none">Stop</button><span class="msg ml-auto" id="sweep-msg"></span></div>
+    <div id="sweep-out"></div>
+  </div>
   <div class="card">
     <h2>Disk</h2>
     <div id="disk-bar" style="height:14px;border-radius:7px;background:var(--line);overflow:hidden"><div id="disk-fill" style="height:100%;width:0;background:var(--accent)"></div></div>
@@ -303,6 +309,12 @@
     <div id="loc-now" style="font-size:20px;font-weight:600"></div>
     <div class="msg" id="loc-now2"></div>
     <div id="loc-body"></div>
+  </div>
+  <div class="card" id="sunset-card" style="display:none">
+    <h2>Sunset glow</h2>
+    <div id="sunset-now" style="font-size:20px;font-weight:600"></div>
+    <div class="msg" id="sunset-why"></div>
+    <div class="msg" id="sunset-note">A satellite-only guess from the cloud to the west. High cloud over part of the sky lights up; low cloud at the horizon blocks it.</div>
   </div>
   <div class="card" id="tide-card" style="display:none">
     <h2>Tides &amp; water</h2>

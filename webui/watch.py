@@ -413,6 +413,7 @@ NOTIFY_CATEGORIES = [      # id, label, what it covers
     ("dish", "Snow or ice on the dish", "Signal dropped while it is cold and precipitating at Bridgeport"),
     ("trend", "Signal quality trend", "Signal clearly worse than the week before"),
     ("health", "Daily health summary", "One short summary of signal, disk and Pi health each morning"),
+    ("sunset", "Sunset glow", "A good sunset looks likely tonight, from cloud to the west in the satellite scans"),
     ("image", "Daily best image", "The clearest Stratford picture of the day"),
     ("space", "Geomagnetic storms", "K-index 6 or higher"),
     ("storm", "New tropical storm", "When a storm appears for the Storm view"),
@@ -749,6 +750,16 @@ def _convect_loop():
         except Exception as e:
             print("storm clip error:", e, flush=True)
         time.sleep(900)
+
+
+def _sunset_loop():
+    time.sleep(420)
+    while True:
+        try:
+            _mod("sunset").check(lambda title, body: push_only(title, body, key="sunsetglow", every=20 * 3600, tags="sunrise", category="sunset"))
+        except Exception as e:
+            print("sunset error:", e, flush=True)
+        time.sleep(600)
 
 
 def _monthly_loop():
@@ -1132,5 +1143,5 @@ def _backup_loop():
 
 
 def start(procs, external_pids):
-    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ()), (_backup_loop, ()), (_skywarn_loop, ())):
+    for fn, args in ((_sampler, (procs["goesrecv"],)), (_watchdog, (procs, external_pids)), (_wx_loop, ()), (_trend_loop, ()), (_heartbeat_loop, ()), (_convect_loop, ()), (_sunset_loop, ()), (_monthly_loop, ()), (_extras_loop, ()), (_bestimage_loop, ()), (_backup_loop, ()), (_skywarn_loop, ())):
         threading.Thread(target=fn, args=args, daemon=True).start()

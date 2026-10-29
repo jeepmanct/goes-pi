@@ -57,6 +57,9 @@ local = _load("local")
 tides = _load("tides")
 winter = _load("winter")
 tropical = _load("tropical")
+sunset = _load("sunset")
+gainsweep = _load("gainsweep")
+sys.modules["goes_sunset"] = sunset
 for _n, _m in (("tides", tides), ("winter", winter), ("tropical", tropical)):
     sys.modules["goes_" + _n] = _m        # watch.py's background checks share these instances
 sys.modules["goes_local"] = local
@@ -943,6 +946,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/winter":
                 ev = winter.evaluate()
                 return self.send_json({**ev, "headline": winter.headline(ev)})
+            if u.path == "/api/gainsweep":
+                return self.send_json(gainsweep.state())
+            if u.path == "/api/sunset":
+                return self.send_json(sunset.outlook())
             if u.path == "/api/tides":
                 return self.send_json(tides.tides())
             if u.path == "/api/local":
@@ -1020,6 +1027,14 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(1)
                     return self.send_json({"result": pr.start()})
                 return self.send_json({"result": getattr(pr, act)()})
+            if path in ("/api/gainsweep/start", "/api/gainsweep/abort", "/api/gainsweep/apply"):
+                if path.endswith("start"):
+                    err = gainsweep.start(body.get("dwell", gainsweep.DWELL))
+                    return self.send_json({"error": err} if err else {"result": "started"}, 409 if err else 200)
+                if path.endswith("abort"):
+                    return self.send_json({"result": gainsweep.abort()})
+                msg = gainsweep.apply(body.get("gain"))
+                return self.send_json({"result": msg} if msg.startswith("Gain set") else {"error": msg}, 200 if msg.startswith("Gain set") else 409)
             if path == "/api/config/fields":
                 update_config(body["fields"])
                 msg = "saved"
@@ -1108,6 +1123,7 @@ if __name__ == "__main__":
         ctx.load_cert_chain(CERT, KEY)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
                                      do_handshake_on_connect=False)
+    gainsweep.init(PROCS, update_config, read_config)
     watch.start(PROCS, external_pids)
     sysstats.start()
     threading.Thread(target=lambda: (products.charts(), local.summary(), skywarn.summary()), daemon=True).start()     # warm the product index so the first Charts/Weather open is quick
