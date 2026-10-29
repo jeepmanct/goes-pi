@@ -1,0 +1,27 @@
+# Copy to mail.conf (git-ignored) and edit. Read by digest.py and the panel.
+smtp_host = "smtp.mail.me.com"        # iCloud shown; any SMTP server with STARTTLS on 587 works
+smtp_port = 587
+username = "you@icloud.com"           # your SMTP sign-in
+sender = "you@icloud.com"             # must be that address or one of its aliases
+sender_name = "GOES Northeast"
+recipients = ["you@example.com"]      # the FIRST address is the primary: technical alerts go only to it;
+                                      # NWS warnings and the daily briefing go to everyone
+send_time = "08:00"                   # US Eastern; sends once a day, trying for 4.5 hours from then
+password_file = "/home/pi/goes/mail-password.txt"   # put the SMTP / app-specific password in this file (chmod 600)
+afd_offices = ["OKX", "BOX", "PHI", "ALY"]   # forecast offices to read, best first
+max_afd = 2
+roundup_office = "OKX"                # NWS office whose hourly Regional Weather Roundup feeds the "Right now" table
+roundup_stations = ["Bridgeport", "New Haven", "Central Park", "LaGuardia Arpt", "Kennedy Intl", "Newark/Liberty", "Philadelphia", "Boston", "Albany"]
+public_url = ""                       # public share page URL (Tailscale Funnel), e.g. "https://<host>.ts.net:8443"
+weekly = true                         # Sunday "week in review" time-lapse email
+weekly_day = "Sun"
+weekly_recipients = ["you@example.com"]
+weekly_view = "northeast"
+
+[alerts]
+ntfy_topic = ""                       # phone pushes via ntfy; pick a long random topic name
+# alert_recipients = ["you@example.com"]    # override who gets technical alert emails (default: first recipient)
+# weather_recipients = ["you@example.com"]  # override who gets NWS warning emails (default: all recipients)
+# heartbeat_url = ""                  # optional dead-man-switch ping (e.g. a healthchecks.io URL)
+# wx_offices = ["OKX"]                # NWS offices to watch for warnings/watches
+# wx_levels = ["W", "A"]              # W = warning, A = watch (Y = advisory)
