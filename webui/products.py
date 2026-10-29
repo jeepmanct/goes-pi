@@ -307,9 +307,8 @@ def active_alerts(offices=None, now=None, zones=None):
     now = now or time.time()
     cut = now - ACTIVE_HOURS * 3600
     events = {}
-    for r in sorted(_rows(), key=lambda r: r["t"]):          # oldest first so later actions win
-        if r["t"] < cut or r["cat"] not in VTEC_CATS or r["office"] not in offices:
-            continue
+    rows = [r for r in _rows() if r["t"] >= cut and r["cat"] in VTEC_CATS and r["office"] in offices]
+    for r in sorted(rows, key=lambda r: r["t"]):          # oldest first so later actions win; filtered first, the index holds ~65k rows
         try:
             text = _read(r["name"])
         except OSError:

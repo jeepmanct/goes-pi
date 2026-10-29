@@ -426,7 +426,17 @@ def space():
 
 # ---- everything for the panel ---------------------------------------------------------------------
 
+_summary = {"t": 0.0, "d": None}
+
+
 def summary():
+    """Cached for 20 seconds: the Weather tab, the share page and the warm-up all ask for it."""
+    if _summary["d"] is None or time.time() - _summary["t"] > 20:
+        _summary["d"], _summary["t"] = _build_summary(), time.time()
+    return _summary["d"]
+
+
+def _build_summary():
     p = _products()
     zones = [HOME["zone"], HOME["marine"]]
     return {"place": HOME["name"], "now": metar(), "taf": taf(), "forecast": zone_product("ZFP", HOME["office"], HOME["zone"]),
