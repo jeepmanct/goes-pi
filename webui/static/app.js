@@ -788,7 +788,7 @@ function renderMail(d) {
   $('#m-list').innerHTML = '';
   d.recipients.forEach(addr => {
     const row = document.createElement('div'); row.className = 'mrow';
-    const a = document.createElement('span'); a.className = 'addr'; a.textContent = addr;
+    const a = document.createElement('span'); a.className = 'addr'; a.textContent = addr + (addr === d.recipients[0] ? '  \u2605 primary' : '');
     const t = document.createElement('button'); t.className = 'b ghost'; t.textContent = 'Send test';
     t.onclick = async () => {
       t.disabled = true; mailNote('Sending test to ' + addr + '…');
@@ -798,7 +798,7 @@ function renderMail(d) {
     const x = document.createElement('button'); x.className = 'b stop'; x.textContent = 'Remove';
     x.disabled = d.recipients.length < 2;
     x.onclick = async () => {
-      if (!confirm('Remove ' + addr + ' from the list?')) return;
+      if (!confirm('Remove ' + addr + ' from the list?' + (addr === d.recipients[0] ? ' It is the primary address, so alert emails would go to the next one.' : ''))) return;
       const r = await api('/api/mail/recipients', {remove: addr});
       if (r.error) mailNote(r.error); else { renderMail(r); mailNote('Removed ' + addr); }
     };

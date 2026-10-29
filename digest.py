@@ -693,7 +693,7 @@ def main():
                 note = EmailMessage()
                 note["Subject"] = "GOES: today's briefing was not sent"
                 note["From"] = f"{cfg['sender_name']} <{cfg['sender']}>"
-                to = cfg.get("alert_recipients") or cfg["recipients"]
+                to = cfg.get("alert_recipients") or cfg["recipients"][:1]
                 note["To"] = ", ".join(to)
                 note["Date"] = formatdate(localtime=True)
                 note["Message-ID"] = make_msgid(domain="goes.local")

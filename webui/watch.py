@@ -68,7 +68,7 @@ def _config():
 
 
 def notify(subject, body, key=None, every=6 * 3600):
-    """Email the alert recipients. key+every rate-limits repeats of the same alert."""
+    """Email the recipients: NWS warnings to everyone, technical alerts to the primary. key+every rate-limits repeats of the same alert."""
     cat = "nws" if subject.startswith("NWS:") else "system"
     if not notify_settings()["enabled"].get(cat, True):
         log_notification(subject, body, "email", cat, False, "switched off")
@@ -81,7 +81,10 @@ def notify(subject, body, key=None, every=6 * 3600):
             _alerts[key] = now
     try:
         cfg = _config()
-        to = cfg.get("alert_recipients") or cfg["recipients"]
+        if subject.startswith("NWS:"):     # weather warnings and watches go to everyone; technical alerts to the primary only
+            to = cfg.get("weather_recipients") or cfg["recipients"]
+        else:
+            to = cfg.get("alert_recipients") or cfg["recipients"][:1]
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = f"{cfg['sender_name']} <{cfg['sender']}>"
