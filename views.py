@@ -29,6 +29,10 @@ import importlib.util
 _sp = importlib.util.spec_from_file_location("surface", Path("/home/pi/goes/surface.py"))
 surface = importlib.util.module_from_spec(_sp)
 _sp.loader.exec_module(surface)       # surface temperature and radar helpers (python -I has no script dir on the path)
+_sp = importlib.util.spec_from_file_location("sitecfg", Path("/home/pi/goes/sitecfg.py"))
+_sc = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(_sc)
+_SITE = _sc.load()
 
 DATA = Path("/home/pi/goes/data/goes19")
 FD = DATA / "fd"
@@ -45,7 +49,7 @@ X0, STEP = -0.151844, 0.000056  # fixed-grid scan angle of pixel 0 / per pixel (
 NATIVE = 5424
 VIS_AGE = dt.timedelta(minutes=12)   # visible/infrared must come from the same scan, roughly
 NYC = (40.71, -74.01)
-HOME = (40.00, -75.00)          # Stratford, CT
+HOME = (round(_SITE["lat"], 2), round(_SITE["lon"], 2))     # the dish, from site.json
 STORM_FILE = Path("/home/pi/goes/storm.json")   # {"name", "lat", "lon", "half": degrees}; written by storm.py or by hand
 
 # (name, lat, lon, rank): rank 1 = big, 2 = regional, 3 = local; a view shows cities up to its city_rank

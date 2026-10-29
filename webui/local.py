@@ -13,7 +13,16 @@ import threading
 import time
 from pathlib import Path
 
-HOME = {"name": "Stratford, CT", "lat": 40.0000, "lon": -75.0000, "station": "KBDR", "zone": "CTZ009",
+def _site():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sitecfg", Path(__file__).resolve().parent.parent / "sitecfg.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.load()
+
+
+_SITE = _site()
+HOME = {"name": _SITE["name"], "lat": _SITE["lat"], "lon": _SITE["lon"], "station": "KBDR", "zone": "CTZ009",
         "marine": "ANZ335", "office": "OKX"}
 EMWIN = Path.home() / "goes" / "data" / "emwin"
 WX_WORDS = {"RA": "rain", "SN": "snow", "DZ": "drizzle", "SG": "snow grains", "IC": "ice crystals", "PL": "ice pellets",

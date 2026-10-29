@@ -1135,7 +1135,8 @@ $('#wx-warn').onclick = () => { wxWarnOnly = true; $('#wx-cat').value = ''; $('#
 $('#wx-afd').onclick = () => { wxWarnOnly = false; $('#wx-cat').value = 'AFD'; $('#wx-office').value = wxMine[0] || ''; wxSearch(true, 5); };
 
 // ---- sky: sun, moon and where the dish points (Stratford, CT)
-const SKY = {lat: 41.18, lon: -73.13, satLon: -75.0, tz: 'America/New_York'};   // Stratford, CT
+const SKY = {lat: null, lon: null, satLon: -75.0, tz: 'America/New_York'};   // lat/lon come from /api/site (site.json on the Pi)
+api('/api/site').then(s => { SKY.lat = Math.round(s.lat * 100) / 100; SKY.lon = Math.round(s.lon * 100) / 100; if ($('#aim').classList.contains('active')) renderSky(); });
 const rad = Math.PI / 180;
 function sunPos(ms) {
   const n = ms / 86400000 + 2440587.5 - 2451545.0;
@@ -1171,6 +1172,7 @@ function moonInfo(ms) {
   return {name: names[Math.round(age / 29.530588853 * 8) % 8], illum: Math.round(illum * 100)};
 }
 function renderSky() {
+  if (SKY.lat == null) return;
   const box = $('#sky'); if (!box) return;
   const now = Date.now(), sun = sunPos(now), dish = dishDir(), sep = angSep(sun, dishDir());
   const tm = t => t ? new Date(t).toLocaleTimeString([], {timeZone: SKY.tz, hour: 'numeric', minute: '2-digit'}) : '–';

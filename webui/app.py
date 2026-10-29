@@ -946,6 +946,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/winter":
                 ev = winter.evaluate()
                 return self.send_json({**ev, "headline": winter.headline(ev)})
+            if u.path == "/api/site":
+                return self.send_json({"name": local.HOME["name"], "lat": local.HOME["lat"], "lon": local.HOME["lon"]})
             if u.path == "/api/gainsweep":
                 return self.send_json(gainsweep.state())
             if u.path == "/api/sunset":

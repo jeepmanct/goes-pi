@@ -16,7 +16,16 @@ import sys
 import time
 from pathlib import Path
 
-HOME = (40.0000, -75.0000)        # Stratford, CT
+def _site():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sitecfg", Path(__file__).resolve().parent.parent / "sitecfg.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.load()
+
+
+_SITE = _site()
+HOME = (_SITE["lat"], _SITE["lon"])
 OFFICES = ["OKX", "BOX", "ALY"]   # weather offices covering Connecticut
 RADIUS_KM = 200                   # local storm reports within this distance
 CT_ZONES = {"CTZ001": "Litchfield", "CTZ002": "Hartford", "CTZ003": "Tolland", "CTZ004": "Windham",

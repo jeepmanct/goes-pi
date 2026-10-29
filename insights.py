@@ -37,7 +37,6 @@ VERIF_LOG = GOES / "verification.jsonl"
 SIGNAL = GOES / "signal-history.jsonl"
 DISH_DAILY = GOES / "dish-daily.json"
 LOCAL = ZoneInfo("America/New_York")
-HOME = (40.0000, -75.0000)
 
 SKY_PCT = {"CLR": 0, "SKC": 0, "FEW": 15, "SCT": 40, "BKN": 75, "OVC": 100, "VV": 100}
 FC_SKY_PCT = {"Clear": 0, "Few clouds": 15, "Scattered": 40, "Broken": 75, "Overcast": 100}
@@ -52,6 +51,8 @@ def load(name, path):
     return m
 
 
+SITE = load("sitecfg", GOES / "sitecfg.py").load()
+HOME = (SITE["lat"], SITE["lon"])
 surface = load("surface", GOES / "surface.py")
 products = load("goes_products", GOES / "webui" / "products.py")
 local = load("goes_local", GOES / "webui" / "local.py")
