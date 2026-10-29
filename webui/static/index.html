@@ -67,22 +67,15 @@
   </div>
   <div class="card"><h2>Viterbi errors (lower is better)</h2><canvas id="h-vit"></canvas></div>
   <div class="card"><h2>Packets per second</h2><canvas id="h-ok"></canvas></div>
-  <div class="card"><h2>Gain</h2><canvas id="h-gain"></canvas></div>
-  <div class="card" id="sweep-card">
-    <h2>Gain sweep</h2>
-    <p class="msg" style="margin-top:0">Tries tuner gains 50, 44, 40, 36 and 30, then 50 again to check for drift, about 20 minutes in all. Each step restarts goesrecv, so there are short gaps in the images. Your current gain is put back when it finishes, and you choose whether to apply the result.</p>
-    <div class="row"><button class="b go" id="sweep-go">Start sweep</button><button class="b ghost" id="sweep-stop" style="display:none">Stop</button><span class="msg ml-auto" id="sweep-msg"></span></div>
-    <div id="sweep-out"></div>
+  <div class="card">
+    <h2>Outages, last 14 days</h2>
+    <div id="outage-list"><p class="msg">Loading…</p></div>
+    <p class="msg">An outage is three or more minutes with almost no packets decoded. The cause is a best guess from the sun's position and the Bridgeport airport weather.</p>
   </div>
   <div class="card">
     <h2>Disk</h2>
     <div id="disk-bar" style="height:14px;border-radius:7px;background:var(--line);overflow:hidden"><div id="disk-fill" style="height:100%;width:0;background:var(--accent)"></div></div>
     <p class="msg" id="disk-txt"></p>
-  </div>
-  <div class="card">
-    <h2>Outages, last 14 days</h2>
-    <div id="outage-list"><p class="msg">Loading…</p></div>
-    <p class="msg">An outage is three or more minutes with almost no packets decoded. The cause is a best guess from the sun's position and the Bridgeport airport weather.</p>
   </div>
   <div class="card">
     <h2>Alerts</h2>
@@ -92,6 +85,13 @@
       <button class="b ghost" id="alert-test-wx">Check warnings now</button>
     </div>
     <p class="msg" id="alert-msg"></p>
+  </div>
+  <div class="card"><h2>Gain</h2><canvas id="h-gain"></canvas></div>
+  <div class="card" id="sweep-card">
+    <h2>Gain sweep</h2>
+    <p class="msg" style="margin-top:0">Tries tuner gains 50, 44, 40, 36 and 30, then 50 again to check for drift, about 20 minutes in all. Each step restarts goesrecv, so there are short gaps in the images. Your current gain is put back when it finishes, and you choose whether to apply the result.</p>
+    <div class="row"><button class="b go" id="sweep-go">Start sweep</button><button class="b ghost" id="sweep-stop" style="display:none">Stop</button><span class="msg ml-auto" id="sweep-msg"></span></div>
+    <div id="sweep-out"></div>
   </div>
 </section>
 
@@ -155,10 +155,6 @@
     <button class="b ghost" id="webui-restart">Restart panel</button>
     <p class="msg">Reloads this web panel, for example after an update. goesrecv and goesproc are stopped for about a minute and start again by themselves. The page reloads when the panel is back.</p>
   </div>
-  <div class="msg" id="ctl-msg"></div>
-</section>
-
-<section id="config">
   <div class="card">
     <h2>Receiver settings</h2>
     <label>Source</label>
@@ -186,6 +182,7 @@
     <div class="row mt10"><button class="b" data-raw="goesproc">Save</button></div>
     <p class="msg">Saves are checked for valid TOML and the previous file is kept as <code>.bak</code>.</p>
   </div>
+  <div class="msg" id="ctl-msg"></div>
 </section>
 
 <section id="globe">
@@ -294,21 +291,18 @@
 
 <section id="weather">
   <div id="wx-alerts"></div>
-  <div class="card" id="winter-card" style="display:none">
-    <h2>Winter weather</h2>
-    <div id="winter-head" style="font-size:20px;font-weight:600"></div>
-    <div id="winter-body"></div>
-  </div>
-  <div class="card" id="trop-card" style="display:none">
-    <h2>Atlantic tropics</h2>
-    <div id="trop-head" style="font-size:20px;font-weight:600"></div>
-    <div id="trop-body"></div>
-  </div>
   <div class="card" id="loc-card">
     <h2 id="loc-title">Stratford, CT</h2>
     <div id="loc-now" style="font-size:20px;font-weight:600"></div>
     <div class="msg" id="loc-now2"></div>
     <div id="loc-body"></div>
+  </div>
+  <div class="card" id="pf-card" style="display:none">
+    <h2 id="pf-title">Forecast for Bridgeport</h2>
+    <canvas id="pf-temp"></canvas>
+    <canvas class="spark" id="pf-wind"></canvas>
+    <div class="mt8" id="pf-table"></div>
+    <p class="msg" id="pf-note"></p>
   </div>
   <div class="card" id="sunset-card" style="display:none">
     <h2>Sunset glow</h2>
@@ -323,12 +317,15 @@
     <div id="tide-chart"></div>
     <div id="tide-hilo"></div>
   </div>
-  <div class="card" id="pf-card" style="display:none">
-    <h2 id="pf-title">Forecast for Bridgeport</h2>
-    <canvas id="pf-temp"></canvas>
-    <canvas class="spark" id="pf-wind"></canvas>
-    <div class="mt8" id="pf-table"></div>
-    <p class="msg" id="pf-note"></p>
+  <div class="card" id="winter-card" style="display:none">
+    <h2>Winter weather</h2>
+    <div id="winter-head" style="font-size:20px;font-weight:600"></div>
+    <div id="winter-body"></div>
+  </div>
+  <div class="card" id="trop-card" style="display:none">
+    <h2>Atlantic tropics</h2>
+    <div id="trop-head" style="font-size:20px;font-weight:600"></div>
+    <div id="trop-body"></div>
   </div>
   <div class="card" id="wh-card">
     <div class="row" style="justify-content:space-between"><h2 class="m0">Recent weather at Bridgeport airport</h2>
@@ -370,6 +367,17 @@
 </section>
 
 <section id="notify">
+  <div class="card">
+    <h2>Phone push notifications</h2>
+    <p class="msg">Alerts (signal lost, restarts, weather warnings, skipped briefing) can also be pushed to your phone with the free ntfy app. Install ntfy, subscribe to a topic name that is hard to guess, and enter the same name here. Anyone who knows the topic could read the alerts, so make it long and random. Alert text passes through ntfy.sh.</p>
+    <div class="row">
+      <input class="grow12" type="text" id="pt-topic" placeholder="e.g. goes-k3x9q7m2vz" autocapitalize="none" autocomplete="off">
+      <button class="b" id="pt-save">Save</button>
+      <button class="b ghost" id="pt-gen">Make one</button>
+      <button class="b ghost" id="pt-test">Send test push</button>
+    </div>
+    <p class="msg" id="pt-msg"></p>
+  </div>
   <div class="card">
     <h2>Which alerts reach your phone</h2>
     <div id="nt-list"></div>
@@ -433,17 +441,6 @@
     </div>
     <p class="msg" id="sh-msg"></p>
     <p class="msg">Anyone with a link can view the pictures, nothing else. Give each person their own link so you can see who opens it and cancel just theirs. If an email address matches a recipient above, that person's daily email carries their own link. "New link" cancels the old one.</p>
-  </div>
-  <div class="card">
-    <h2>Phone push notifications</h2>
-    <p class="msg">Alerts (signal lost, restarts, weather warnings, skipped briefing) can also be pushed to your phone with the free ntfy app. Install ntfy, subscribe to a topic name that is hard to guess, and enter the same name here. Anyone who knows the topic could read the alerts, so make it long and random. Alert text passes through ntfy.sh.</p>
-    <div class="row">
-      <input class="grow12" type="text" id="pt-topic" placeholder="e.g. goes-k3x9q7m2vz" autocapitalize="none" autocomplete="off">
-      <button class="b" id="pt-save">Save</button>
-      <button class="b ghost" id="pt-gen">Make one</button>
-      <button class="b ghost" id="pt-test">Send test push</button>
-    </div>
-    <p class="msg" id="pt-msg"></p>
   </div>
 </section>
 

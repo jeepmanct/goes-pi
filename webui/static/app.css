@@ -25,6 +25,7 @@ nav button.active { color: var(--text); border-bottom-color: var(--accent); }
 .menu button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 11px 12px;
   font-size: 15px; border-radius: 6px; cursor: pointer; }
 .menu button:hover, .menu button.active { background: var(--bg); }
+.menu-h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #8a97a8); padding: 8px 12px 2px; }
 main { padding: 16px; max-width: 1000px; margin: 0 auto; }
 section { display: none; }
 section.active { display: block; }

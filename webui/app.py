@@ -1093,7 +1093,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/notify/test":
                 ok = watch.push_only("GOES: test notification", "If you can read this, phone alerts are working.",
                                      priority="default", tags="white_check_mark", category="test")
-                return self.send_json({"result": "sent" if ok else "not sent: check the ntfy topic in the Mail tab"})
+                return self.send_json({"result": "sent" if ok else "not sent: check the ntfy topic in the Notifications tab"})
             if path == "/api/sdrtest":
                 return self.send_json(sdr_check())
             if path == "/api/webui/restart":

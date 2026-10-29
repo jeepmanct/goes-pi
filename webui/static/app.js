@@ -55,8 +55,8 @@ function unitsRefresh() {
 
 // ---- tabs
 // Everyday tabs sit in the bar; the admin ones are in the More menu.
-const TABS = [['globe','Views'],['insights','Insights'],['weather','Weather'],['charts','Charts'],['gallery','Gallery'],['forecast','Forecast']];
-const MORE = [['aim','Aim'],['signal','Signal'],['skywarn','Skywarn'],['pi','Pi'],['control','Control'],['config','Config'],['images','Files'],['mail','Mail'],['notify','Notifications']];
+const TABS = [['weather','Weather'],['forecast','Forecast'],['globe','Views'],['insights','Insights'],['charts','Charts'],['gallery','Gallery']];
+const MORE = [['-','Weather'],['skywarn','Skywarn'],['-','Dish'],['aim','Aim'],['signal','Signal'],['-','System'],['pi','Pi'],['control','Receiver'],['-','Setup'],['notify','Notifications'],['mail','Mail'],['images','Files']];
 TABS.forEach(([id, name]) => {
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
@@ -68,6 +68,7 @@ moreBtn.textContent = 'More ▾'; moreBtn.id = 'more-btn';
 $('#tabs').append(moreBtn);
 const menu = document.createElement('div'); menu.className = 'menu'; menu.id = 'more-menu';
 MORE.forEach(([id, name]) => {
+  if (id === '-') { const h = document.createElement('div'); h.className = 'menu-h'; h.textContent = name; menu.append(h); return; }
   const b = document.createElement('button');
   b.textContent = name; b.dataset.tab = id;
   b.onclick = () => { menu.classList.remove('open'); show(id); };
@@ -86,11 +87,11 @@ document.addEventListener('click', () => menu.classList.remove('open'));
 function show(id) {
   document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === id));
   document.querySelectorAll('nav button[data-tab], .menu button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
-  const inMore = MORE.find(([k]) => k === id);
+  const inMore = MORE.find(([k]) => k === id && k !== '-');
   moreBtn.classList.toggle('active', !!inMore);
   moreBtn.textContent = (inMore ? inMore[1] : 'More') + ' ▾';
   try { localStorage.tab = id; } catch {}
-  if (id === 'config') loadConfig();
+  if (id === 'control') loadConfig();
   if (id === 'images') loadDir(curPath);
   if (id === 'gallery') loadGallery(true);
   if (id === 'globe') loadGlobe();
@@ -98,7 +99,7 @@ function show(id) {
   if (id === 'forecast') loadForecast();
   if (id === 'weather') loadWeather();
   if (id === 'skywarn') loadSkywarn();
-  if (id === 'notify') loadNotify();
+  if (id === 'notify') { loadNotify(); loadMail(); }
   if (id === 'aim') renderSky();
   if (id === 'charts') loadCharts();
   if (id === 'signal') loadSignal();
@@ -1011,11 +1012,16 @@ async function loadLocal() {
     body.append(locBlock('Space weather', rows, 'Aurora is only likely in Connecticut at a K-index of 7 or more.'));
   }
 }
+// quiet winter/tropics cards sit lower on the Weather tab; they move to the top when there is something to act on
+function placeCard(card, active) {
+  if (active) $('#loc-card').before(card); else $('#wh-card').before(card);
+}
 async function loadTropical() {
   const card = $('#trop-card'), r = await api('/api/tropical');
   if (!r || !r.headline || (!r.season && !r.storms.length)) { card.style.display = 'none'; return; }
   card.style.display = '';
   const head = $('#trop-head'); head.textContent = r.headline;
+  placeCard(card, r.storms.length > 0);
   head.style.color = `var(--${r.storms.length ? 'bad' : (r.outlook && r.outlook.areas.length ? 'warn' : 'good')})`;
   const body = $('#trop-body'); body.innerHTML = '';
   r.storms.forEach(s => body.append(locBlock(s.title + ' · advisory ' + s.number, Object.entries(s.keys).map(([k, v]) => [k, Units.text(v)]), wxFmt(s.t))));
@@ -1028,6 +1034,7 @@ async function loadWinter() {
   if (!r || !r.stage || (!r.season && r.stage !== 'alert')) { card.style.display = 'none'; return; }
   card.style.display = '';
   const lvl = {alert: 'bad', likely: 'warn', watch: 'warn', none: 'good'}[r.stage];
+  placeCard(card, r.stage !== 'none');
   const head = $('#winter-head'); head.textContent = r.headline;
   head.style.color = `var(--${lvl})`;
   const body = $('#winter-body'); body.innerHTML = '';
