@@ -176,7 +176,7 @@ $('#aim-toggle').onclick = async () => {
 const METRICS = [
   ['ok','Packets OK /s',''], ['drops','Dropped /s',''], ['vit','Viterbi err (avg)','lower = better'],
   ['rs','Reed-Solomon (sum)','0 = clean'], ['freq','Freq offset Hz','near 0 when locked'],
-  ['omega','Clock omega','steady ≈ locked'], ['gain','Gain','']
+  ['omega','Clock omega','steady ≈ locked'], ['gain','AGC gain','auto, not the tuner setting']
 ];
 $('#metrics').innerHTML = METRICS.map(([k,l,s]) =>
   `<div class="metric"><div class="l">${l}</div><div class="v" id="m-${k}">–</div><div class="s" id="ms-${k}">${s}</div></div>`).join('');
@@ -206,7 +206,6 @@ function render() {
   }
   if (!last) return;
   for (const [k] of METRICS) $('#m-'+k).textContent = f(last[k], k === 'omega' ? 3 : k === 'gain' ? 0 : 0);
-  $('#gain-val').textContent = f(last.gain);
   if (live) {
     if (last.ok > 0 && (best.vit == null || last.vit < best.vit)) best.vit = last.vit;
     best.ok = Math.max(best.ok, last.ok);
@@ -270,12 +269,19 @@ function tone(p) {
 }
 
 $('#gain-up').onclick = () => bump(+1); $('#gain-dn').onclick = () => bump(-1);
+async function showTunerGain() {
+  const c = await api('/api/config');
+  const g = c.fields && c.fields.gain;
+  $('#gain-val').textContent = g == null ? '–' : String(g);
+}
+showTunerGain();
 async function bump(d) {
   const cur = Number($('#gain-val').textContent);
   if (isNaN(cur)) return;
   $('#aim-msg').textContent = 'Applying gain…';
   const r = await api('/api/config/fields', {fields: {gain: cur + d}, restart: true});
   $('#aim-msg').textContent = r.result || r.error;
+  showTunerGain();
   hist = []; lastT = Date.now() / 1000; best = {vit: null, ok: 0};
 }
 
