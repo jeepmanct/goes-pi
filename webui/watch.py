@@ -983,7 +983,9 @@ def _extras_loop():
 
 def _cloudiness(path):
     from PIL import Image
-    im = Image.open(path).convert("RGB")
+    with Image.open(path) as src:
+        src.draft("RGB", (320, 320))
+        im = src.convert("RGB")
     im.thumbnail((160, 160))
     px = list(im.getdata())
     return sum(1 for r, g, b in px if min(r, g, b) > 170) / max(len(px), 1)

@@ -196,7 +196,9 @@ def thumb(p, width=360):
     THUMBS.mkdir(parents=True, exist_ok=True)
     out = THUMBS / f"{p.stem}_{width}.jpg"
     if not out.exists():
-        im = Image.open(p).convert("RGB")
+        with Image.open(p) as src:
+            src.draft("RGB", (width * 2, width * 4))
+            im = src.convert("RGB")
         im.thumbnail((width, width * 2))
         tmp = out.with_suffix(".tmp")
         im.save(tmp, "JPEG", quality=78)

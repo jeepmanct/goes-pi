@@ -378,6 +378,9 @@ def thumb(rel, width=360):
         Image.MAX_IMAGE_PIXELS = None
         with Image.open(src) as im:
             im.draft("RGB", (width * 2, width * 2))
+            if im.mode in ("L", "I;16", "P") and max(im.size) > width * 2:
+                # shrink while still single-channel: avoids an 88 MB RGB copy of a 5424 px scan
+                im = im.reduce(max(1, max(im.size) // (width * 2)))
             im = im.convert("RGB")
             im.thumbnail((width, width))
             tmp = dst.with_name(dst.name + ".tmp")
@@ -613,7 +616,9 @@ def make_gif(view, hours):
         pick = fr[:: max(1, -(-len(fr) // 72))][-72:]
         ims = []
         for p in pick:
-            im = Image.open(p).convert("RGB")
+            with Image.open(p) as src:
+                src.draft("RGB", (1440, 1440))
+                im = src.convert("RGB")
             w = 720
             ims.append(im.resize((w, round(im.height * w / im.width)), Image.LANCZOS)
                        .quantize(colors=128, method=Image.Quantize.MEDIANCUT))

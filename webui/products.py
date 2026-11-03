@@ -7,6 +7,7 @@ Read-only: nothing here writes to the data directory.
 import datetime as dt
 import os
 import re
+import sys
 import threading
 import time
 import tomllib
@@ -106,6 +107,24 @@ def issued_ts(ddhhmm, recv):
     return recv
 
 
+class Row:
+    """One EMWIN product. Slotted (about a fifth of a dict's size; the index holds ~180k of these) but still
+    read as row["t"], row.get("t") like the dicts it replaced."""
+    __slots__ = ("name", "t", "office", "cat", "site", "head")
+
+    def __init__(self, name, t, office, cat, site, head):
+        self.name, self.t, self.office, self.cat, self.site, self.head = name, t, office, cat, site, head
+
+    def __getitem__(self, k):
+        try:
+            return getattr(self, k)
+        except AttributeError:
+            raise KeyError(k) from None
+
+    def get(self, k, default=None):
+        return getattr(self, k, default)
+
+
 def _rows():
     """Every product on disk as dicts, newest first. Re-listed at most once a minute; only new names are parsed."""
     with _lock:
@@ -134,7 +153,7 @@ def _rows():
                 head, office, issued, recv, pil = m.groups()
                 try:
                     t = issued_ts(issued, dt.datetime.strptime(recv, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp())
-                    row = {"name": n, "t": t, "office": office[1:], "cat": pil[:3], "site": pil[3:], "head": head}
+                    row = Row(n, t, sys.intern(office[1:]), sys.intern(pil[:3]), sys.intern(pil[3:]), sys.intern(head))
                 except ValueError:
                     pass
             _seen[n] = row
