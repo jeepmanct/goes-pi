@@ -44,3 +44,4 @@ views.py.bak*
 webui/local.py.bak*
 sunset-log.jsonl
 site.json
+panel-mem.log
