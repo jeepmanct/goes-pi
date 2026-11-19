@@ -360,8 +360,32 @@ def gallery(offset=0, limit=60, region=""):
     return {"total": len(items), "items": items[offset:offset + limit]}
 
 
+_dir_size_cache = {}
+
+
 def dir_size(p):
-    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    """Total bytes under p. Streams with os.scandir (rglob/os.walk keep a list of every entry: ~100 MB transient for the ~440k files
+    under data/) and is cached for a minute, because the Health and Storage panels both ask on every refresh."""
+    key = str(p)
+    hit = _dir_size_cache.get(key)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    total, stack = 0, [key]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        elif e.is_file(follow_symlinks=False):
+                            total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    _dir_size_cache[key] = (time.time(), total)
+    return total
 
 
 THUMB_WIDTHS = (360, 720)       # 360 = gallery grid, 720 = time-lapse frames
@@ -1130,6 +1154,24 @@ if __name__ == "__main__":
         ctx.load_cert_chain(CERT, KEY)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True,
                                      do_handshake_on_connect=False)
+    if os.environ.get("GOES_TRACEMALLOC") == "1":
+        import tracemalloc
+        tracemalloc.start(8)
+        def _tm_dump():
+            """Debug (GOES_TRACEMALLOC=1): hourly top allocation sites + growth since the first snapshot -> ~/goes/tracemalloc.log"""
+            base = None
+            while True:
+                time.sleep(3600)
+                try:
+                    snap = tracemalloc.take_snapshot()
+                    base = base or snap
+                    with open(Path.home() / "goes" / "tracemalloc.log", "a") as f:
+                        f.write(f"== {datetime.datetime.now().isoformat(timespec='seconds')} traced={tracemalloc.get_traced_memory()[0] // 1048576} MB\n")
+                        for st in snap.compare_to(base, "lineno")[:15]:
+                            f.write(f"  {st}\n")
+                except Exception as e:
+                    print("tracemalloc dump failed:", e, flush=True)
+        threading.Thread(target=_tm_dump, daemon=True).start()
     gainsweep.init(PROCS, update_config, read_config)
     watch.start(PROCS, external_pids)
     sysstats.start()

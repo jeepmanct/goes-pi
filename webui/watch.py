@@ -8,6 +8,7 @@ Started from app.py with start(procs). Everything here runs in daemon threads.
 import collections
 import datetime as dt
 import json
+import os
 import re
 import statistics
 import sys
@@ -313,13 +314,18 @@ def wx_check(first_run=False, dry=False):
         return []
     seen = set(SEEN.read_text().split()) if SEEN.exists() else set()
     new, hits = [], []
-    for p in EMWIN.glob("*.TXT"):
-        if p.name in seen:
+    try:
+        names = (e.name for e in os.scandir(EMWIN))   # lazily: not Path.glob (a Path object per file) and not a list of ~350k names every 2 minutes
+    except OSError:
+        names = ()
+    for fname in names:
+        if not fname.endswith(".TXT") or fname in seen:
             continue
-        m = NAME_RE.search(p.name)
+        m = NAME_RE.search(fname)
         if not m or f"K{m.group(2)}" not in [("K" + o[-3:]) for o in cfg["offices"]]:
             continue
-        new.append(p.name)
+        p = EMWIN / fname
+        new.append(fname)
         if first_run:
             continue
         txt = _text(p)

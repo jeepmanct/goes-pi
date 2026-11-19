@@ -86,6 +86,7 @@ CHARTS = [      # (group, [(PIL prefix regex, label)])
     ("Satellite", [("G10CIR", "GOES infrared, US")]),
     ("Tropics", [("AL\\d", "Atlantic outlook"), ("EP\\d", "East Pacific outlook")]),
 ]
+INDEX_DAYS = 7  # products issued in the last week; every reader looks back 72 h at most (the UI caps at 72 h, weather history keeps its own store)
 _seen = {}      # file name -> parsed row (or None if it does not look like a product); only new names are parsed
 
 
@@ -134,8 +135,12 @@ def _rows():
             names = {e.name for e in os.scandir(EMWIN)}
         except OSError:
             names = set()
+        cut = time.time() - INDEX_DAYS * 86400
+        cut_recv = time.strftime("%Y%m%d%H%M%S", time.gmtime(cut))
         for gone in set(_seen) - names:
             del _seen[gone]
+        for old in [k for k, r in _seen.items() if r is not None and r.t < cut]:   # aged out of the index window (the file stays on disk)
+            del _seen[old]
         for gone in set(_gseen) - names:
             del _gseen[gone]
         for n in names - set(_seen) - set(_gseen):
@@ -151,9 +156,11 @@ def _rows():
                 continue
             if m:
                 head, office, issued, recv, pil = m.groups()
+                if recv < cut_recv:
+                    continue   # received before the window, so issued before it too: never stored (these files are ~60% of the retained text; nobody reads them)
                 try:
                     t = issued_ts(issued, dt.datetime.strptime(recv, "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp())
-                    row = Row(n, t, sys.intern(office[1:]), sys.intern(pil[:3]), sys.intern(pil[3:]), sys.intern(head))
+                    row = Row(n, t, sys.intern(office[1:]), sys.intern(pil[:3]), sys.intern(pil[3:]), sys.intern(head)) if t >= cut else None
                 except ValueError:
                     pass
             _seen[n] = row
