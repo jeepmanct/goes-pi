@@ -45,3 +45,4 @@ webui/local.py.bak*
 sunset-log.jsonl
 site.json
 panel-mem.log
+mail-password.txt.bak*
