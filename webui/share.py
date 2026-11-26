@@ -381,7 +381,8 @@ const pic=async v=>{try{const f=(await(await fetch(B+'api/'+v)).json()).frames;r
 const [p1,p2]=await Promise.all([pic('sst_stratford'),pic('rad_stratford')]);
 const s=r.sst||{},d=r.radar||{},c=r.clouds||{},f=r.forecast||{};let h='';
 h+='<h2>Water temperature, from the satellite</h2>';
-if(s.latest)h+='<div class="g">'+tile('Long Island Sound',U.t(s.latest.sound_f,1).toFixed(U.m?1:0)+U.tu(),s.sound_24h?'last 24 h: '+U.t(s.sound_24h.min,1).toFixed(U.m?1:0)+'–'+U.t(s.sound_24h.max,1).toFixed(U.m?1:0)+U.tu():'')+
+const soundNote=(s.latest&&s.latest.t&&(Date.now()-Date.parse(s.latest.t))>5400000)?' · last clear reading '+new Date(s.latest.t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+if(s.latest)h+='<div class="g">'+tile('Long Island Sound',U.t(s.latest.sound_f,1).toFixed(U.m?1:0)+U.tu(),s.sound_24h?'last 24 h: '+U.t(s.sound_24h.min,1).toFixed(U.m?1:0)+'–'+U.t(s.sound_24h.max,1).toFixed(U.m?1:0)+U.tu():'')+soundNote+
  Object.entries(s.latest.points||{}).map(([k,v])=>tile(k,U.t(v,1).toFixed(U.m?1:0)+U.tu())).join('')+'</div>';
 h+=p1+'<p class="iss">Estimated from two infrared channels where the sky is clear; gray is cloud. Pixels along the coast mix land and water, so open water is the most reliable. '+
  (s.pairs?'Checked against '+s.pairs+' National Weather Service water readings at the Jersey shore: average error '+(s.mean_error_f>0?'+':'')+U.dt(s.mean_error_f)+U.tu()+'. ':'')+'Expect about ±'+(U.m?'1.7°C':'3°F')+'.</p>';

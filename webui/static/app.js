@@ -1341,7 +1341,9 @@ async function loadInsights() {
   const s = d.sst || {}, r = d.radar || {}, cl = d.clouds || {}, f = d.forecast || {}, di = d.dish || {};
   // water temperature
   let h = '<div class="card"><h2>Water temperature (from the satellite)</h2>';
-  if (s.latest) h += `<div class="grid"><div class="metric"><div class="l">Long Island Sound</div><div class="v">${Units.t(s.latest.sound_f).toFixed(Units.metric ? 1 : 0)} ${Units.tu()}</div><div class="s">${s.sound_24h ? 'last 24 h: ' + Units.t(s.sound_24h.min).toFixed(Units.metric ? 1 : 0) + '–' + Units.t(s.sound_24h.max).toFixed(Units.metric ? 1 : 0) + ' ' + Units.tu() : ''}</div></div>` +
+  const soundOld = s.latest && s.latest.t && (Date.now() - Date.parse(s.latest.t)) > 90 * 60000;
+  const soundNote = soundOld ? ' · last clear reading ' + new Date(s.latest.t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+  if (s.latest) h += `<div class="grid"><div class="metric"><div class="l">Long Island Sound</div><div class="v">${Units.t(s.latest.sound_f).toFixed(Units.metric ? 1 : 0)} ${Units.tu()}</div><div class="s">${s.sound_24h ? 'last 24 h: ' + Units.t(s.sound_24h.min).toFixed(Units.metric ? 1 : 0) + '–' + Units.t(s.sound_24h.max).toFixed(Units.metric ? 1 : 0) + ' ' + Units.tu() : ''}${soundNote}</div></div>` +
     Object.entries(s.latest.points || {}).map(([k, v]) => `<div class="metric"><div class="l">${k}</div><div class="v">${Units.t(v).toFixed(Units.metric ? 1 : 0)} ${Units.tu()}</div></div>`).join('') + '</div>';
   h += insImg(im.sst_stratford, 'Clear-sky surface temperature; gray is cloud. Coastal pixels mix land and water, so trust open water most. Full set in Views.');
   h += `<p class="msg">Checked against NWS water temperatures at the Jersey shore: ${s.pairs ? s.pairs + ' comparisons over ' + s.days + ' day(s), average error ' + (s.mean_error_f > 0 ? '+' : '') + Units.dt(s.mean_error_f) + ' ' + Units.tu() : 'none yet'}. ` +

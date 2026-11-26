@@ -740,9 +740,33 @@ def render_sst(key, spec, files, t, box, geo):
     rgb = np.where(geo["disc"][..., None], rgb, 0.0)
     stats = sst_stats(key, spec, t, raw, clear, geo, off)
     mode = "clear-sky surface temperature (F), gray = cloud"
-    if stats.get("sound_f") is not None:
+    if stats.get("sound_f") is not None and stats.get("sound_clear", 0) >= SOUND_MIN_CLEAR:
         mode += f"  ·  Sound about {stats['sound_f'] + off * 1.8:.0f} F"
+    else:
+        last = last_good_sound()
+        if last:
+            mode += f"  ·  Sound last clear at {last[1]}: {last[0] + off * 1.8:.0f} F (cloud now)"
     return rgb, mode
+
+
+SOUND_MIN_CLEAR = 0.5   # a Sound reading counts only if at least half the Sound area was clear of cloud
+
+
+def last_good_sound():
+    """(raw F, local time) of the most recent Sound reading taken with enough clear sky, from SCAN_LOG; None if none."""
+    try:
+        lines = SCAN_LOG.read_text(encoding="utf-8").splitlines()[-4000:]
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("view") == "sst_stratford" and r.get("sound_f") is not None and (r.get("sound_clear") or 0) >= SOUND_MIN_CLEAR:
+            when = dt.datetime.fromisoformat(r["t"]).astimezone().strftime("%H:%M")
+            return r["sound_f"], when
+    return None
 
 
 def sst_stats(key, spec, t, raw, clear, geo, off):

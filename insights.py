@@ -200,10 +200,13 @@ def sst_section(scans, now):
         out["calibrated"] = False
         out["offset_k"] = surface.offset_k()
     off_f = out["offset_k"] * 1.8
-    lastS = [r for r in scans if r.get("view") == "sst_stratford" and r.get("sound_f") is not None]
+    # A Sound reading is only trusted when at least half the Sound area was clear of cloud. Under cloud the few "clear"
+    # pixels are cold cloud edges or tops, which read far below any water temperature (see sound_clear in insights-scan.jsonl).
+    lastS = [r for r in scans if r.get("view") == "sst_stratford" and r.get("sound_f") is not None and (r.get("sound_clear") or 0) >= 0.5]
     if lastS:
         r = lastS[-1]
-        pts = next((x.get("points") for x in reversed(scans) if x.get("view") == "sst_eastus" and x.get("points")), {})
+        # sea points come only from scans with enough clear sky near home; under cloud they keep the last good values
+        pts = next((x.get("points") for x in reversed(scans) if x.get("view") == "sst_eastus" and x.get("points") and (x.get("clear_home") or 0) >= 0.5), {})
         out["latest"] = {"t": r["t"], "sound_f": r1(r["sound_f"] + off_f), "sound_clear": r.get("sound_clear"),
                          "points": {k: r1(v + off_f) for k, v in pts.items()}}
         day = [x["sound_f"] + off_f for x in lastS if now - ts(x["t"]) < 86400]
